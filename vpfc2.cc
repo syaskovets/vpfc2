@@ -50,8 +50,8 @@ using namespace AMDiS;
 using namespace Dune::Functions::BasisFactory;
 
 // using Grid = Dune::YaspGrid<2, Dune::EquidistantOffsetCoordinates<double,2>>;
-using Grid = Dune::UGGrid<2>;
-// using Grid = Dune::ALUGrid<2,2,Dune::simplex,Dune::conforming>;
+// using Grid = Dune::UGGrid<2>;
+using Grid = Dune::ALUGrid<2,2,Dune::simplex,Dune::conforming>;
 // using Param = LagrangeBasis<Grid, 1, 1, 1, 1, 1>;
 using Param = LagrangeBasis<Grid, 1, 1, 1, 1, 1, 1, 1>;
 
@@ -87,8 +87,7 @@ std::vector<peakProp> particles;
 class G2fix
 {
 public:
-
-  G2fix()  
+  G2fix()
   {
     posX1 = Parameters::get<double>("vpfc->posX1").value();
     posY1 = Parameters::get<double>("vpfc->posY1").value();
@@ -203,13 +202,10 @@ class MyProblemInstat : public ProblemInstat<Traits> {
     int iter;
     bool vInit;
     std::shared_ptr < Grid > grid;
-    // GridView& gridView;
 
   public:
     MyProblemInstat(std::string const& name, ProblemStat<Traits>& prob)
       : iter(0), vInit(false), ProblemInstat<Traits>(name, prob) {}
-    // MyProblemInstat(std::string const& name, ProblemStat<Traits>& prob, std::shared_ptr < Grid > grid, GridView& gridView)
-    //   : iter(0), vInit(false), grid(grid), gridView(gridView), ProblemInstat<Traits>(name, prob) {}
 
     void closeTimestep(AdaptInfo& adaptInfo) {
       auto phi = this->problemStat_->solution(0);
@@ -337,16 +333,10 @@ class MyProblemInstat : public ProblemInstat<Traits> {
         v2.interpolate(constant(0.0));
       }
 
-      // for (int k = 0; k < 3; ++k) {
-      //   for (const auto & element: elements(gridView))
-      //     grid -> mark(1, element);
-      //   grid -> preAdapt();
-      //   grid -> adapt();
-      //   grid -> postAdapt();
-      // }
-      // for (int i=0 ; i<2; i++){
-      //   refinement->refine(1,   function_(indicator3("vpfc", 0.95 ), 5.0*valueOf(psi) , pow<2>(valueOf(q1)) + pow<2>(valueOf(q2)), abs_(valueOf(problemStat->getSolution()->getDOFVector(2)))     ));    
-      // }
+      for (int k = 0; k < 7; ++k) {
+        this->problemStat_-> markElements(adaptInfo);
+        this->problemStat_-> adaptGrid(adaptInfo);
+      }
 
       ProblemInstat<Traits>::closeTimestep(adaptInfo);
     }
@@ -367,7 +357,7 @@ void setInitValues(ProblemStat<Param>& prob, AdaptInfo& adaptInfo) {
   // double B0 = integrate( constant(1.0) , prob.getMesh() ); // size of the domain
   double psibar = N*0.9*16*M_PI*M_PI/3/B0* sqrt( (-48.0 - 56.0*r)/133.0  );
 
-  std::cout << "B0 " << B0 << " psibar " << psibar << " r " << r << " N " << N << std::endl; 
+  std::cout << "B0 " << B0 << " psibar " << psibar << " r " << r << " N " << N << std::endl;
 
   int interface_ref = Parameters::get<int>("vpfc->interface refinements").value_or(15);
   int bulk_ref = Parameters::get<int>("vpfc->bulk refinements").value_or(10);
@@ -375,18 +365,18 @@ void setInitValues(ProblemStat<Param>& prob, AdaptInfo& adaptInfo) {
 
   double threshold = 0.90;
 
-  GridFunctionMarker marker("interface", prob.grid(),
+  static GridFunctionMarker marker("interface", prob.grid(),
     invokeAtQP([interface_ref,bulk_ref,outer_ref,threshold](double const& phi) -> int {
+    // std::cout << " marker f " << ((phi > -threshold) && (phi < threshold)) << " " << phi << std::endl;
       return ( phi < -threshold ) ? outer_ref : (phi > threshold) ? bulk_ref : interface_ref;
     }, 10.0*valueOf(prob.solution(0))-1));
-  prob.addMarker(marker);  
+  prob.addMarker(marker);
 
   phi.interpolate(fct);
-  for (int i=0; i<4;i++){
+  for (int i=0; i<7;i++){
     phi.interpolate(fct);
     B0 = integrate(constant(1.0), prob.gridView(), 6);
     density = integrate(valueOf(phi), prob.gridView(), 6)/B0; // density of the initial value
-    std::cout << "density " << density << " B0 " << B0 << " psibar " << psibar << std::endl;
     phi << 1.2*psibar/(density+0.0000001)*valueOf(phi);
 
     prob.markElements(adaptInfo);
@@ -481,19 +471,20 @@ int main(int argc, char** argv)
   // using Factory3 = Dune::StructuredGridFactory<Grid>;
   // auto grid = Factory3::createSimplexGrid(Dune::FieldVector<double, 2>({-scale[0], -scale[1]}), Dune::FieldVector<double, 2>({scale[0], scale[1]}),
   //                                           std::array<unsigned int,2>{2u,2u});
+  // Grid grid(Dune::FieldVector<double, 2>({-scale[0], -scale[1]}), Dune::FieldVector<double, 2>({scale[0], scale[1]}), {2u, 2u});
 
   // using Grid = UGGrid < dim > ;
 
   // Start with a structured grid
-  const std::array < unsigned, 2 > n = { 8, 8 };
+  const std::array < unsigned, 2 > n = { 16, 16 };
   const FieldVector < double, 2 > lower = {-scale[0], -scale[1]};
   const FieldVector < double, 2 > upper = {scale[0], scale[1]};
 
 
   std::shared_ptr < Grid > grid = Dune::StructuredGridFactory < Grid > ::createSimplexGrid(lower, upper, n);
 
-  using GridView = Grid::LeafGridView;
-  GridView gridView = grid -> leafGridView();
+  // using GridView = Grid::LeafGridView;
+  // GridView gridView = grid -> leafGridView();
 
   // Grid grid(Dune::FieldVector<double, 2>(), Dune::FieldVector<double, 2>(), {2u, 2u});
 
