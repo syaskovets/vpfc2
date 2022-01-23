@@ -9,7 +9,7 @@ vpfc->H: 10000
 vpfc->K: 0.05
 vpfc->mobility: 30
 vpfc->N: 2
-vpfc->cooldown: 3
+vpfc->cooldown: 1
 vpfc->N2: 9
 vpfc->add vacancy: 1
 vpfc->add noise: 1
@@ -64,32 +64,18 @@ vpfc->output[2]->mode:               1
 vpfc->output[2]->animation:          1
 
 vpfc->output[3]->format:             vtk
-vpfc->output[3]->filename:           q1.2d
+vpfc->output[3]->filename:           v1.2d
 vpfc->output[3]->output directory:   output_vpfc
-vpfc->output[3]->name:               q1
+vpfc->output[3]->name:               v1
 vpfc->output[3]->mode:               1
 vpfc->output[3]->animation:          1
 
 vpfc->output[4]->format:             vtk
-vpfc->output[4]->filename:           q2.2d
+vpfc->output[4]->filename:           v2.2d
 vpfc->output[4]->output directory:   output_vpfc
-vpfc->output[4]->name:               q2
+vpfc->output[4]->name:               v2
 vpfc->output[4]->mode:               1
 vpfc->output[4]->animation:          1
-
-vpfc->output[5]->format:             vtk
-vpfc->output[5]->filename:           v1.2d
-vpfc->output[5]->output directory:   output_vpfc
-vpfc->output[5]->name:               v1
-vpfc->output[5]->mode:               1
-vpfc->output[5]->animation:          1
-
-vpfc->output[6]->format:             vtk
-vpfc->output[6]->filename:           v2.2d
-vpfc->output[6]->output directory:   output_vpfc
-vpfc->output[6]->name:               v2
-vpfc->output[6]->mode:               1
-vpfc->output[6]->animation:          1
 
 adapt->timestep:    0.001
 adapt->start time:  0.0

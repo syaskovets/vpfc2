@@ -10,6 +10,7 @@
 #include <boost/fusion/container/vector.hpp>
 #include <boost/fusion/include/vector.hpp>
 #include <boost/fusion/include/at_c.hpp>
+#include <boost/core/demangle.hpp>
 
 #include <amdis/AMDiS.hpp>
 #include <amdis/AdaptInstationary.hpp>
@@ -22,6 +23,7 @@
 #include <dune/alugrid/grid.hh>
 #include <dune/grid/uggrid.hh>
 #include <dune/grid/utility/structuredgridfactory.hh>
+#include <typeinfo>
 
 std::pair<double, double> generateGaussianNoise(double mu, double sigma)
 {
@@ -52,8 +54,7 @@ using namespace Dune::Functions::BasisFactory;
 // using Grid = Dune::YaspGrid<2, Dune::EquidistantOffsetCoordinates<double,2>>;
 // using Grid = Dune::UGGrid<2>;
 using Grid = Dune::ALUGrid<2,2,Dune::simplex,Dune::conforming>;
-// using Param = LagrangeBasis<Grid, 1, 1, 1, 1, 1>;
-using Param = LagrangeBasis<Grid, 1, 1, 1, 1, 1, 1, 1>;
+using Param = LagrangeBasis<Grid, 1, 1, 1, 1, 1>;
 
 // using Grid = Dune::YaspGrid<2>;
 // using Grid = Dune::AlbertaGrid<GRIDDIM, WORLDDIM>;
@@ -195,13 +196,67 @@ double dist(const coord& x, const coord& y) {
   return std::sqrt(std::pow(x.first - y.first, 2)+std::pow(x.second - y.second, 2));
 }
 
+using btype = AMDiS::GlobalBasis<Dune::Functions::PowerPreBasis<Dune::Functions::BasisFactory::FlatLexicographic, 
+Dune::Functions::LagrangePreBasis<Dune::GridView<AMDiS::DefaultLeafGridViewTraits<
+const AMDiS::AdaptiveGrid<Dune::ALUGrid<2, 2, Dune::simplex, Dune::conforming> > > >, 1, double>, 8> >;
 
+// using btype = AMDiS::GlobalBasis<Dune::Functions::PowerPreBasis<Dune::Functions::BasisFactory::FlatLexicographic, 
+// Dune::Functions::LagrangePreBasis<Dune::GridView<AMDiS::DefaultLeafGridViewTraits<const AMDiS::AdaptiveGrid<Dune::ALUGrid<2, 2, 
+// Dune::simplex, Dune::conforming> > > >, 1, double>, 8> >;
+
+// using btype = AMDiS::GlobalBasis<Dune::Functions::PowerPreBasis<Dune::Functions::BasisFactory::FlatLexicographic, 
+// Dune::Functions::LagrangePreBasis<Dune::GridView<AMDiS::DefaultLeafGridViewTraits<
+// const AMDiS::AdaptiveGrid<Dune::ALUGrid<2, 2, Dune::simplex, Dune::conforming> > > >, 1, double>, 8> >;
+
+
+template <class B, class GF, class TP, class NTRE>
+void iterateTreeSubset(B const& basis, GF const& gf, TP const& treePath, NTRE const& nodeToRangeEntry)
+{
+  auto lf = localFunction(gf);
+  auto localView = basis.localView();
+
+  for (const auto& e : elements(basis.gridView(), typename BackendTraits<B>::PartitionSet{}))
+  {
+    localView.bind(e);
+    lf.bind(e);
+
+    auto&& subTree = Dune::TypeTree::child(localView.tree(),treePath);
+    Traversal::forEachLeafNode(subTree, [&](auto const& node, auto const& tp)
+    {
+      using Traits = typename TYPEOF(node)::FiniteElement::Traits::LocalBasisType::Traits;
+      using RangeField = typename Traits::RangeFieldType;
+
+      auto&& fe = node.finiteElement();
+
+      // extract component of local function result corresponding to node in tree
+      auto localFj = [&](auto const& local)
+      {
+        const auto& tmp = lf(local);
+        return nodeToRangeEntry(node, tp, Dune::MatVec::as_vector(tmp));
+      };
+
+      thread_local std::vector<RangeField> interpolationCoeff;
+      fe.localInterpolation().interpolate(localFj, interpolationCoeff);
+    });
+  }
+}
+
+
+template < template <class, class, class, class> typename DiscreteFunction, 
+          class Coeff, class GB, class TreePath, class R, typename Expr>
+void applyComposerGridFunction(DiscreteFunction<Coeff, GB, TreePath, R>& df, Expr&& expr) {
+  const auto & basis = df.basis();
+  auto const& treePath = df.treePath();
+  auto&& gf = makeGridFunction(FWD(expr), basis.gridView());
+  auto ntrm = AMDiS::HierarchicNodeToRangeMap();
+
+  iterateTreeSubset(basis, gf, treePath, ntrm);
+}
 
 template <class Traits>
 class MyProblemInstat : public ProblemInstat<Traits> {
-    int iter;
-    bool vInit;
-    std::shared_ptr < Grid > grid;
+  int iter;
+  bool vInit;
 
   public:
     MyProblemInstat(std::string const& name, ProblemStat<Traits>& prob)
@@ -209,34 +264,32 @@ class MyProblemInstat : public ProblemInstat<Traits> {
 
     void closeTimestep(AdaptInfo& adaptInfo) {
       auto phi = this->problemStat_->solution(0);
-      auto temp1 = this->problemStat_->solution(3);
-      auto temp2 = this->problemStat_->solution(4);
-      auto v1 = this->problemStat_->solution(5);
-      auto v2 = this->problemStat_->solution(6);
+      auto mu = this->problemStat_->solution(2);
+      auto v1 = this->problemStat_->solution(3);
+      auto v2 = this->problemStat_->solution(4);
 
-      tag::partial der0, der1;
-      der0.comp = 0;
-      der1.comp = 1;
+      // double B0 = integrate(constant(1.0), this->problemStat_->gridView(), 6);
+      // double density = integrate(valueOf(phi), this->problemStat_->gridView(), 6)/B0; // density of the initial value
+      // std::cout << "B0 " << B0 << "density " << density << std::endl;
 
       if (++iter > cooldown) {
         peaks.clear();
         particles.clear();
 
-        temp1 << derivativeOf(valueOf(phi), der0) + derivativeOf(valueOf(phi), der1);
-        temp2 << derivativeOf(valueOf(temp1), der0) + derivativeOf(valueOf(temp1), der1);
-
         double min = 0.0;
 
-        temp1 << invokeAtQP([&](auto dd_p_x, auto const& x) {
-          if (min > dd_p_x)
-            min = dd_p_x;
+        auto f = invokeAtQP([&](auto dd_p_x, auto const& x) {
+          if (min > dd_p_x[0])
+            min = dd_p_x[0];
 
           return dd_p_x;
-        }, temp2, X());
+        }, mu, X());
 
-        temp1 << invokeAtQP([&](auto dd_p_x, auto v1_x, auto v2_x, auto const& x) {
+        applyComposerGridFunction(phi, f);
+
+        auto f1 = invokeAtQP([&](auto dd_p_x, auto v1_x, auto v2_x, auto const& x) {
           // consider only ampls within 20% of the max (min)
-          if ((min-dd_p_x)/min < 0.2) {
+          if ((min-dd_p_x[0])/min < 0.2) {
             coord c_x = x_to_coord(x);
             peakProp p(c_x, dd_p_x[0], v1_x[0], v2_x[0]);
             peaks.push_back(p);
@@ -244,7 +297,9 @@ class MyProblemInstat : public ProblemInstat<Traits> {
           }
 
           return 0;
-        }, temp2, v1, v2, X());
+        }, mu, v1, v2, X());
+
+        applyComposerGridFunction(phi, f1);
 
         // sort peaks by second derivative ampl
         std::sort(peaks.begin(), peaks.end(), [](auto &left, auto &right) {
@@ -344,10 +399,9 @@ class MyProblemInstat : public ProblemInstat<Traits> {
 
 void setInitValues(ProblemStat<Param>& prob, AdaptInfo& adaptInfo) {  
   auto phi = prob.solution(0);
-  auto temp1 = prob.solution(3);
-  auto temp2 = prob.solution(4);
-  auto v1 = prob.solution(5);
-  auto v2 = prob.solution(6);
+  auto psi = prob.solution(1);
+  auto v1 = prob.solution(3);
+  auto v2 = prob.solution(4);
 
   // NgridOrientedDots fct;
   G2fix fct;
@@ -387,8 +441,7 @@ void setInitValues(ProblemStat<Param>& prob, AdaptInfo& adaptInfo) {
 
   v1.interpolate(constant(0.0));
   v2.interpolate(constant(0.0));
-  temp1.interpolate(constant(0.0));
-  temp2.interpolate(constant(0.0));
+  psi.interpolate(constant(0.0));
 }
 
 void setDensityOperators(ProblemStat<Param>& prob, MyProblemInstat<Param>& probInstat) {
@@ -400,8 +453,8 @@ void setDensityOperators(ProblemStat<Param>& prob, MyProblemInstat<Param>& probI
   auto phi = prob.solution(0);
   auto phiOld = probInstat.oldSolution(0);
   auto invTau = std::ref(probInstat.invTau());
-  auto v1 = prob.solution(5);
-  auto v2 = prob.solution(6);
+  auto v1 = prob.solution(3);
+  auto v2 = prob.solution(4);
   auto temp = prob.solution(7);
 
   prob.addMatrixOperator(sot(M), 0, 1);
@@ -434,23 +487,15 @@ void setDensityOperators(ProblemStat<Param>& prob, MyProblemInstat<Param>& probI
   prob.addMatrixOperator(op1BC,1,0);  
 }
 
-void setTempOperators(ProblemStat<Param>& prob, MyProblemInstat<Param>& probInstat) {
+void setVelocityOperators(ProblemStat<Param>& prob, MyProblemInstat<Param>& probInstat) {
+  auto v1 = prob.solution(3);
+  auto v2 = prob.solution(4);
+
   prob.addMatrixOperator(zot(1), 3, 3);
-  prob.addVectorOperator(zot(0), 3);
+  prob.addVectorOperator(zot(v1), 3);
 
   prob.addMatrixOperator(zot(1), 4, 4);
-  prob.addVectorOperator(zot(0), 4);
-}
-
-void setVelocityOperators(ProblemStat<Param>& prob, MyProblemInstat<Param>& probInstat) {
-  auto v1 = prob.solution(5);
-  auto v2 = prob.solution(6);
-
-  prob.addMatrixOperator(zot(1), 5, 5);
-  prob.addVectorOperator(zot(v1), 5);
-
-  prob.addMatrixOperator(zot(1), 6, 6);
-  prob.addVectorOperator(zot(v2), 6);
+  prob.addVectorOperator(zot(v2), 4);
 }
 
 int main(int argc, char** argv)
@@ -506,7 +551,6 @@ int main(int argc, char** argv)
 
   setDensityOperators(prob, probInstat);
   setVelocityOperators(prob, probInstat);
-  setTempOperators(prob, probInstat);
   setInitValues(prob, adaptInfo);
 
   AdaptInstationary adapt("adapt", prob, adaptInfo, probInstat, adaptInfo);
