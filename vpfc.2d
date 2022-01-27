@@ -7,17 +7,19 @@ vpfc->r: -0.9
 vpfc->q: 1
 vpfc->H: 10000
 vpfc->K: 0.05
-vpfc->mobility: 30
+vpfc->mobility: 200
+vpfc->mobility v: 40
 vpfc->N: 2
-vpfc->cooldown: 1
+vpfc->cooldown: 3
 vpfc->N2: 9
 vpfc->add vacancy: 1
 vpfc->add noise: 1
+vpfc->noise sigma: 1
 vpfc->c:  0.8
 vpfc->c1:     0.2 % parameter of laplacian Q
 vpfc->c2:  0.1
 vpfc->beta:   10.0
-vpfc->v0:    200.0   % strength parameter
+vpfc->v0:    50.0   % strength parameter
 vpfc->posX1:    0.0
 vpfc->posY1:    0.0
 vpfc->posX2:    11.0

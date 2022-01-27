@@ -69,6 +69,7 @@ double c1, c2, beta, v0;
 int N, cooldown;
 bool addVacancy = true;
 bool addNoise = false;
+double noiseSigma;
 
 FieldVector<double,2> scale;
 
@@ -79,7 +80,7 @@ typedef std::pair<double,double> coord;
 typedef boost::fusion::vector<coord, double, double, double> peakProp;
 
 double v0XInit[] = {1.0, -1.0};
-double v0YInit[] = {1.0, -1.0};
+double v0YInit[] = {0.0, 0.0};
 
 std::vector<peakProp> peaks;
 std::vector<peakProp> particles;
@@ -276,20 +277,24 @@ class MyProblemInstat : public ProblemInstat<Traits> {
         peaks.clear();
         particles.clear();
 
-        double min = 0.0;
+        double min_mu = 0.0;
+        double max_phi_x = 0.0;
 
-        auto f = invokeAtQP([&](auto dd_p_x, auto const& x) {
-          if (min > dd_p_x[0])
-            min = dd_p_x[0];
+        auto f = invokeAtQP([&](auto dd_p_x, auto phi_x, auto const& x) {
+          if (min_mu > dd_p_x[0])
+            min_mu = dd_p_x[0];
+
+          if (max_phi_x < phi_x[0])
+            max_phi_x = phi_x[0];
 
           return dd_p_x;
-        }, mu, X());
+        }, mu, phi, X());
 
         applyComposerGridFunction(phi, f);
 
         auto f1 = invokeAtQP([&](auto dd_p_x, auto v1_x, auto v2_x, auto const& x) {
-          // consider only ampls within 20% of the max (min)
-          if ((min-dd_p_x[0])/min < 0.2) {
+          // consider only ampls within 20% of the max (min_mu)
+          if ((min_mu-dd_p_x[0])/min_mu < 0.2) {
             coord c_x = x_to_coord(x);
             peakProp p(c_x, dd_p_x[0], v1_x[0], v2_x[0]);
             peaks.push_back(p);
@@ -326,7 +331,7 @@ class MyProblemInstat : public ProblemInstat<Traits> {
             double y = boost::fusion::at<boost::mpl::int_<3> >(particles[i]);
             double alpha = atan2 (y,x) * 180.0 / M_PI;
 
-            alpha += generateGaussianNoise(0,20).first;
+            alpha += generateGaussianNoise(0,noiseSigma).first;
 
             x = cos(alpha * M_PI / 180.0); boost::fusion::at<boost::mpl::int_<2> >(particles[i]) = x;
             y = sin(alpha * M_PI / 180.0); boost::fusion::at<boost::mpl::int_<3> >(particles[i]) = y;
@@ -338,7 +343,7 @@ class MyProblemInstat : public ProblemInstat<Traits> {
         }
 
         v1 << invokeAtQP([&](auto phi_x, auto const& x) {
-          if (phi_x > (0.001))
+          if (phi_x > (0.00001))
           {
             double min_dist = dist(boost::fusion::at<boost::mpl::int_<0> >(particles[0]), x_to_coord(x));
             int min_dist_i = 0;
@@ -351,16 +356,18 @@ class MyProblemInstat : public ProblemInstat<Traits> {
               }
             }
 
+            double phi_x_norm = phi_x / max_phi_x;
+
             if (vInit)
-              return boost::fusion::at<boost::mpl::int_<2> >(particles[min_dist_i]);
+              return phi_x_norm * boost::fusion::at<boost::mpl::int_<2> >(particles[min_dist_i]);
             else
-              return v0XInit[min_dist_i];
+              return phi_x_norm * v0XInit[min_dist_i];
           }
           return 0.0;
         }, phi, X());
 
         v2 << invokeAtQP([&](auto phi_x, auto const& x) {
-          if (phi_x > (0.001))
+          if (phi_x > (0.00001))
           {
             double min_dist = dist(boost::fusion::at<boost::mpl::int_<0> >(particles[0]), x_to_coord(x));
             int min_dist_i = 0;
@@ -373,10 +380,12 @@ class MyProblemInstat : public ProblemInstat<Traits> {
               }
             }
 
+            double phi_x_norm = phi_x / max_phi_x;
+
             if (vInit)
-              return boost::fusion::at<boost::mpl::int_<3> >(particles[min_dist_i]);
+              return phi_x_norm * boost::fusion::at<boost::mpl::int_<3> >(particles[min_dist_i]);
             else
-              return v0YInit[min_dist_i];
+              return phi_x_norm * v0YInit[min_dist_i];
           }
           return 0.0;
         }, phi, X());
@@ -448,14 +457,13 @@ void setDensityOperators(ProblemStat<Param>& prob, MyProblemInstat<Param>& probI
   q = Parameters::get<double>("vpfc->q").value_or(10);
   r = Parameters::get<double>("vpfc->r").value_or(0.5);
   H = Parameters::get<double>("vpfc->H").value_or(1500);
-  M = Parameters::get<double>("vpfc->mobility").value_or(1.0);
+  M = Parameters::get<double>("vpfc->mobility").value();
 
   auto phi = prob.solution(0);
   auto phiOld = probInstat.oldSolution(0);
   auto invTau = std::ref(probInstat.invTau());
   auto v1 = prob.solution(3);
   auto v2 = prob.solution(4);
-  auto temp = prob.solution(7);
 
   prob.addMatrixOperator(sot(M), 0, 1);
   prob.addMatrixOperator(sot(1), 1, 2);
@@ -547,6 +555,7 @@ int main(int argc, char** argv)
   cooldown = Parameters::get<int>("vpfc->cooldown").value_or(5);
   addVacancy = Parameters::get<bool>("vpfc->add vacancy").value_or(true);
   addNoise = Parameters::get<bool>("vpfc->add noise").value_or(true);
+  noiseSigma = Parameters::get<double>("vpfc->noise sigma").value();
   double scale_ = Parameters::get<double>("scale").value_or(1.0);
 
   setDensityOperators(prob, probInstat);
