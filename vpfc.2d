@@ -65,20 +65,6 @@ vpfc->output[2]->name:               psi
 vpfc->output[2]->mode:               1
 vpfc->output[2]->animation:          1
 
-vpfc->output[3]->format:             vtk
-vpfc->output[3]->filename:           v1.2d
-vpfc->output[3]->output directory:   output_vpfc
-vpfc->output[3]->name:               v1
-vpfc->output[3]->mode:               1
-vpfc->output[3]->animation:          1
-
-vpfc->output[4]->format:             vtk
-vpfc->output[4]->filename:           v2.2d
-vpfc->output[4]->output directory:   output_vpfc
-vpfc->output[4]->name:               v2
-vpfc->output[4]->mode:               1
-vpfc->output[4]->animation:          1
-
 adapt->timestep:    0.001
 adapt->start time:  0.0
 adapt->end time:    0.5
