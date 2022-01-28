@@ -5,13 +5,6 @@
 #include <vector>
 #include <utility>
 
-#include "boost/variant.hpp"
-#include <boost/mpl/int.hpp>
-#include <boost/fusion/container/vector.hpp>
-#include <boost/fusion/include/vector.hpp>
-#include <boost/fusion/include/at_c.hpp>
-#include <boost/core/demangle.hpp>
-
 #include <amdis/AMDiS.hpp>
 #include <amdis/AdaptInstationary.hpp>
 #include <amdis/LocalOperators.hpp>
@@ -75,15 +68,17 @@ FieldVector<double,2> scale;
 
 using GridView = Grid::LeafGridView;
 
-typedef std::pair<double,double> coord;
-// <[x,y], phi, v_x, v_y>
-typedef boost::fusion::vector<coord, double, double, double> peakProp;
+struct CellPeakProp {
+  double x; double y;
+  double v_x; double v_y;
+  double phi; double dd_phi;
+};
 
 double v0XInit[] = {1.0, -1.0};
 double v0YInit[] = {0.0, 0.0};
 
-std::vector<peakProp> peaks;
-std::vector<peakProp> particles;
+std::vector<CellPeakProp> peaks;
+std::vector<CellPeakProp> particles;
 
 /// inital value function
 class G2fix
@@ -189,12 +184,9 @@ private:
   int bc;
 };
 
-coord x_to_coord(const auto& x) {
-  return std::make_pair(x[0], x[1]);
-} 
-
-double dist(const coord& x, const coord& y) {
-  return std::sqrt(std::pow(x.first - y.first, 2)+std::pow(x.second - y.second, 2));
+template <typename T, typename T1>
+double dist(const T& x, const T1& y) {
+  return std::sqrt(std::pow(x[0] - y[0], 2)+std::pow(x[1] - y[1], 2));
 }
 
 using btype = AMDiS::GlobalBasis<Dune::Functions::PowerPreBasis<Dune::Functions::BasisFactory::FlatLexicographic, 
@@ -274,8 +266,7 @@ class MyProblemInstat : public ProblemInstat<Traits> {
     void closeTimestep(AdaptInfo& adaptInfo) {
       auto phi = this->problemStat_->solution(0);
       auto mu = this->problemStat_->solution(2);
-      auto v1 = valueOf(u,0);
-      auto v2 = valueOf(u,1);
+      auto u_df = valueOf(u);
 
       // double B0 = integrate(constant(1.0), this->problemStat_->gridView(), 6);
       // double density = integrate(valueOf(phi), this->problemStat_->gridView(), 6)/B0; // density of the initial value
@@ -286,37 +277,31 @@ class MyProblemInstat : public ProblemInstat<Traits> {
         particles.clear();
 
         double min_mu = 0.0;
-        double max_phi_x = 0.0;
 
         auto f = invokeAtQP([&](auto dd_p_x, auto phi_x, auto const& x) {
           if (min_mu > dd_p_x[0])
             min_mu = dd_p_x[0];
-
-          if (max_phi_x < phi_x[0])
-            max_phi_x = phi_x[0];
 
           return dd_p_x;
         }, mu, phi, X());
 
         applyComposerGridFunction(phi, f);
 
-        auto f1 = invokeAtQP([&](auto dd_p_x, auto v1_x, auto v2_x, auto const& x) {
+        auto f1 = invokeAtQP([&](auto phi_x, auto dd_p_x, auto v, auto const& x) {
           // consider only ampls within 20% of the max (min_mu)
           if ((min_mu-dd_p_x[0])/min_mu < 0.2) {
-            coord c_x = x_to_coord(x);
-            peakProp p(c_x, dd_p_x[0], v1_x[0], v2_x[0]);
-            peaks.push_back(p);
+            peaks.push_back(CellPeakProp{x[0], x[1], v[0], v[1], phi_x[0], dd_p_x[0]});
             return 1;
           }
 
           return 0;
-        }, mu, v1, v2, X());
+        }, phi, mu, u_df, X());
 
         applyComposerGridFunction(phi, f1);
 
         // sort peaks by second derivative ampl
         std::sort(peaks.begin(), peaks.end(), [](auto &left, auto &right) {
-            return boost::fusion::at<boost::mpl::int_<1> >(left) < boost::fusion::at<boost::mpl::int_<1> >(right);
+            return left.dd_phi < right.dd_phi;
         });
 
         for(auto i = 0; i < peaks.size() || particles.size() < N; ++i) {
@@ -324,7 +309,7 @@ class MyProblemInstat : public ProblemInstat<Traits> {
 
           for(auto it2 = particles.begin(); it2 != particles.end(); ++it2)
             // 2 is an empirical min dist to filter out the same cells
-            if (dist(boost::fusion::at<boost::mpl::int_<0> >(peaks[i]), boost::fusion::at<boost::mpl::int_<0> >(*it2)) < 2)
+            if (dist(FieldVector<double,2>{peaks[i].x, peaks[i].y}, FieldVector<double,2>{it2->x,it2->y}) < 2)
               insert = false;
 
           if (insert)
@@ -335,14 +320,14 @@ class MyProblemInstat : public ProblemInstat<Traits> {
 
         if (vInit && addNoise) {
           for(auto i = 0; i < particles.size(); ++i) {
-            double x = boost::fusion::at<boost::mpl::int_<2> >(particles[i]);
-            double y = boost::fusion::at<boost::mpl::int_<3> >(particles[i]);
+            double x = particles[i].v_x;
+            double y = particles[i].v_y;
             double alpha = atan2 (y,x) * 180.0 / M_PI;
 
             alpha += generateGaussianNoise(0,noiseSigma).first;
 
-            x = cos(alpha * M_PI / 180.0); boost::fusion::at<boost::mpl::int_<2> >(particles[i]) = x;
-            y = sin(alpha * M_PI / 180.0); boost::fusion::at<boost::mpl::int_<3> >(particles[i]) = y;
+            x = cos(alpha * M_PI / 180.0); particles[i].v_x = x;
+            y = sin(alpha * M_PI / 180.0); particles[i].v_y = y;
           }
         }
 
@@ -350,59 +335,34 @@ class MyProblemInstat : public ProblemInstat<Traits> {
           std::cout << "Error!!! " << std::endl;
         }
 
-        v1 << invokeAtQP([&](auto phi_x, auto const& x) {
+        u_df << invokeAtQP([&](auto phi_x, auto const& x) {
           if (phi_x > (0.00001))
           {
-            double min_dist = dist(boost::fusion::at<boost::mpl::int_<0> >(particles[0]), x_to_coord(x));
+            double min_dist = dist(FieldVector<double,2>{particles[0].x, particles[0].y}, x);
             int min_dist_i = 0;
 
             for (int i = 0; i < particles.size(); ++i) {
-              double d = dist(boost::fusion::at<boost::mpl::int_<0> >(particles[i]), x_to_coord(x));
+              double d = dist(FieldVector<double,2>{particles[i].x, particles[i].y}, x);
               if (d < min_dist) {
                 min_dist_i = i;
                 min_dist = d;
               }
             }
 
-            double phi_x_norm = phi_x / max_phi_x;
+            double phi_x_norm = phi_x / particles[min_dist_i].phi;
 
             if (vInit)
-              return phi_x_norm * boost::fusion::at<boost::mpl::int_<2> >(particles[min_dist_i]);
+              return FieldVector<double,2>{phi_x_norm*particles[min_dist_i].v_x, phi_x_norm*particles[min_dist_i].v_y};
             else
-              return phi_x_norm * v0XInit[min_dist_i];
+              return FieldVector<double,2>{phi_x_norm*v0XInit[min_dist_i], phi_x_norm*v0YInit[min_dist_i]};
           }
-          return 0.0;
-        }, phi, X());
-
-        v2 << invokeAtQP([&](auto phi_x, auto const& x) {
-          if (phi_x > (0.00001))
-          {
-            double min_dist = dist(boost::fusion::at<boost::mpl::int_<0> >(particles[0]), x_to_coord(x));
-            int min_dist_i = 0;
-
-            for (int i = 0; i < particles.size(); ++i) {
-              double d = dist(boost::fusion::at<boost::mpl::int_<0> >(particles[i]), x_to_coord(x));
-              if (d < min_dist) {
-                min_dist_i = i;
-                min_dist = d;
-              }
-            }
-
-            double phi_x_norm = phi_x / max_phi_x;
-
-            if (vInit)
-              return phi_x_norm * boost::fusion::at<boost::mpl::int_<3> >(particles[min_dist_i]);
-            else
-              return phi_x_norm * v0YInit[min_dist_i];
-          }
-          return 0.0;
+          return FieldVector<double,2>{0, 0};
         }, phi, X());
 
         if (!vInit)
           vInit = true;
       } else {
-        v1.interpolate(constant(0.0));
-        v2.interpolate(constant(0.0));
+        u_df.interpolate(constant(0.0));
       }
 
       for (int k = 0; k < 5; ++k) {
