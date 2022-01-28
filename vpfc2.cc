@@ -256,8 +256,7 @@ void applyComposerGridFunction(DiscreteFunction<Coeff, GB, TreePath, R>& df, Exp
 
 template <class... Args>
 static auto create(const Args&... args) {
-  // return AMDiS::GlobalBasis{args..., power<2>(lagrange<1>())};
-  return AMDiS::GlobalBasis{args..., lagrange<1>()};
+  return AMDiS::GlobalBasis{args..., power<2>(lagrange<1>())};
 }
 
 template <class Traits>
@@ -266,18 +265,17 @@ class MyProblemInstat : public ProblemInstat<Traits> {
   bool vInit;
 
   typedef decltype(create(std::declval<typename ProblemStat<Traits>::GridView>())) u_type;
-  DOFVector<u_type>& u1;
-  DOFVector<u_type>& u2;
+  DOFVector<u_type>& u;
 
   public:
-    MyProblemInstat(std::string const& name, ProblemStat<Traits>& prob, DOFVector<u_type>& u1, DOFVector<u_type>& u2)
-      : iter(0), vInit(false), ProblemInstat<Traits>(name, prob), u1(u1), u2(u2) {}
+    MyProblemInstat(std::string const& name, ProblemStat<Traits>& prob, DOFVector<u_type>& u)
+      : iter(0), vInit(false), ProblemInstat<Traits>(name, prob), u(u) {}
 
     void closeTimestep(AdaptInfo& adaptInfo) {
       auto phi = this->problemStat_->solution(0);
       auto mu = this->problemStat_->solution(2);
-      auto v1 = valueOf(u1);
-      auto v2 = valueOf(u2);
+      auto v1 = valueOf(u,0);
+      auto v2 = valueOf(u,1);
 
       // double B0 = integrate(constant(1.0), this->problemStat_->gridView(), 6);
       // double density = integrate(valueOf(phi), this->problemStat_->gridView(), 6)/B0; // density of the initial value
@@ -417,7 +415,7 @@ class MyProblemInstat : public ProblemInstat<Traits> {
 };
 
 template <typename DOFVectorType>
-void setInitValues(ProblemStat<Param>& prob, AdaptInfo& adaptInfo, DOFVectorType& u1, DOFVectorType& u2) {
+void setInitValues(ProblemStat<Param>& prob, AdaptInfo& adaptInfo, DOFVectorType& u) {
   auto phi = prob.solution(0);
   auto psi = prob.solution(1);
 
@@ -454,16 +452,14 @@ void setInitValues(ProblemStat<Param>& prob, AdaptInfo& adaptInfo, DOFVectorType
     prob.markElements(adaptInfo);
     prob.adaptGrid(adaptInfo);
   }
-
   // prob.removeMarker("interface");
 
-  valueOf(u1).interpolate(constant(0.0));
-  valueOf(u2).interpolate(constant(0.0));
+  valueOf(u).interpolate(constant(0.0));
   psi.interpolate(constant(0.0));
 }
 
 template <typename DOFVectorType>
-void setDensityOperators(ProblemStat<Param>& prob, MyProblemInstat<Param>& probInstat, DOFVectorType& u1, DOFVectorType& u2) {
+void setDensityOperators(ProblemStat<Param>& prob, MyProblemInstat<Param>& probInstat, DOFVectorType& u) {
   q = Parameters::get<double>("vpfc->q").value_or(10);
   r = Parameters::get<double>("vpfc->r").value_or(0.5);
   H = Parameters::get<double>("vpfc->H").value_or(1500);
@@ -472,19 +468,13 @@ void setDensityOperators(ProblemStat<Param>& prob, MyProblemInstat<Param>& probI
   auto phi = prob.solution(0);
   auto phiOld = probInstat.oldSolution(0);
   auto invTau = std::ref(probInstat.invTau());
-  auto v1 = prob.solution(3);
-  auto v2 = prob.solution(4);
 
   prob.addMatrixOperator(sot(M), 0, 1);
   prob.addMatrixOperator(sot(1), 1, 2);
   prob.addMatrixOperator(sot(1), 2, 0);
   prob.addMatrixOperator(zot(invTau), 0, 0);
   prob.addVectorOperator(zot(phiOld * invTau), 0);
-  tag::partial der0, der1;
-  der0.comp = 0;
-  der1.comp = 1;
-  prob.addVectorOperator(zot(-v0*valueOf(u1)* derivativeOf(valueOf(phi), der0)), 0);
-  prob.addVectorOperator(zot(-v0*valueOf(u2)* derivativeOf(valueOf(phi), der1)), 0);
+  prob.addVectorOperator(zot(-v0*valueOf(u)* derivativeOf(valueOf(phi), tag::gradient{})), 0);
   prob.addMatrixOperator(zot(1.0), 1, 1);
 
   // !sot?
@@ -545,10 +535,9 @@ int main(int argc, char** argv)
   ProblemStat<Param> prob("vpfc", grid);
   prob.initialize(INIT_ALL);
 
-  DOFVector u1(prob.gridView(), lagrange<1>());
-  DOFVector u2(prob.gridView(), lagrange<1>());
+  DOFVector u(prob.gridView(), power<2>(lagrange<1>()));
 
-  MyProblemInstat<Param> probInstat("vpfc", prob, u1, u2);
+  MyProblemInstat<Param> probInstat("vpfc", prob, u);
   probInstat.initialize(INIT_UH_OLD);
 
   AdaptInfo adaptInfo("adapt");
@@ -561,8 +550,8 @@ int main(int argc, char** argv)
   noiseSigma = Parameters::get<double>("vpfc->noise sigma").value();
   double scale_ = Parameters::get<double>("scale").value_or(1.0);
 
-  setDensityOperators(prob, probInstat, u1, u2);
-  setInitValues(prob, adaptInfo, u1, u2);
+  setDensityOperators(prob, probInstat, u);
+  setInitValues(prob, adaptInfo, u);
 
   AdaptInstationary adapt("adapt", prob, adaptInfo, probInstat, adaptInfo);
   adapt.adapt();
