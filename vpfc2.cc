@@ -59,10 +59,10 @@ using Param = LagrangeBasis<Grid, 1, 1, 1>;
 double K;
 double q, r, H, M;
 double c1, c2, beta, v0;
-int N, cooldown, domain;
+int N, cooldown, domain, bc;
 bool addVacancy = true;
 bool addNoise = false;
-double noiseSigma;
+double noiseSigma, compression;
 
 FieldVector<double,2> scale;
 
@@ -137,9 +137,6 @@ public:
     N = Parameters::get<int>("vpfc->N").value();
     // number of particls
 
-    compression = Parameters::get<double>("vpfc->c").value();    
-    bc = Parameters::get<double>("vpfc->bc").value();
-
     for (int i = 0; i < N; ++i)
     {
       double alpha = std::rand()%360;
@@ -161,15 +158,36 @@ public:
     // adding a noise on each grid point 
     // using the first N grid points 
 
-    for (int i=0; i<Nx ; i++)
-      for (int j=0; j<Ny ; j++){
-        y[cntr][0] = -scale[0]*compression + 0.5*dx + i*dx;// + dx*0.002*dis*(rand()%1000-500) ;
-        // y[cntr][0] = -scale[0]*compression + 0.5*15.4778 + i*15.4778;// + dx*0.002*dis*(rand()%1000-500) ;
-        y[cntr][1] = -scale[1]*compression + 0.5*dx + j*dy;// + dy*0.002*dis*(rand()%1000-500) ;
 
-        std::cout << "y[cntr][0] " << y[cntr][0] << " y[cntr][1] " << y[cntr][1] << std::endl;
-        cntr++;
+    if (domain == 0)
+    {
+      for (int i=0; i<Nx ; i++)
+        for (int j=0; j<Ny ; j++){
+          y[cntr][0] = -scale[0]*compression + 0.5*dx + i*dx;// + dx*0.002*dis*(rand()%1000-500) ;
+          // y[cntr][0] = -scale[0]*compression + 0.5*15.4778 + i*15.4778;// + dx*0.002*dis*(rand()%1000-500) ;
+          y[cntr][1] = -scale[1]*compression + 0.5*dx + j*dy;// + dy*0.002*dis*(rand()%1000-500) ;
+
+          cntr++;
+        }
+    }
+    else if (domain == 1) {
+      int i = 0; int j = 0;
+      double _x = 0; double _y = 0;
+
+      while (cntr < N) {
+        _x = -scale[0]*compression + 0.5*dx + i*dx;
+        _y = -scale[1]*compression + 0.5*dx + j*dy;
+
+        if ((_x/scale[0])*(_x/scale[0])+(_y/scale[1])*(_y/scale[1]) < 1) {
+          y[cntr][0] = _x;
+          y[cntr][1] = _y;
+
+          cntr++;
+        }
+
+        ++j; if (j == Ny) {j = 0; ++i;}
       }
+    }
   }
 
   template <typename T>
@@ -189,9 +207,6 @@ public:
 
 private:
   double y [5000][2];
-  double compression;
-  // WorldVector<double> scale;
-  int bc;
 };
 
 template <typename T, typename T1>
@@ -482,12 +497,23 @@ int main(int argc, char** argv)
 {
   Environment env(argc, argv);
   
-  double Nl = 4;
-  double lattice = 4*M_PI/sqrt(3);
+  double Nl = Parameters::get<int>("Nl").value_or(4);
+  double lattice = Parameters::get<int>("lattice").value();
+
+  lattice = lattice*M_PI/sqrt(3);
   double _scale = Nl*lattice;
   scale = FieldVector<double,2>({_scale, _scale});
 
   K = Parameters::get<double>("vpfc->K").value();
+  N = Parameters::get<int>("vpfc->N").value_or(1);
+  v0 = Parameters::get<double>("vpfc->v0").value_or(200);
+  cooldown = Parameters::get<int>("vpfc->cooldown").value_or(5);
+  domain = Parameters::get<int>("vpfc->domain").value();
+  compression = Parameters::get<double>("vpfc->c").value();
+  bc = Parameters::get<double>("vpfc->bc").value();
+  addVacancy = Parameters::get<bool>("vpfc->add vacancy").value_or(true);
+  addNoise = Parameters::get<bool>("vpfc->add noise").value_or(true);
+  noiseSigma = Parameters::get<double>("vpfc->noise sigma").value();
   // Dune::YaspGrid<2> grid(Dune::FieldVector<double, 2>({2*scale[0], 2*scale[1]}), {2u, 2u});
   // using Factory2 = Dune::StructuredGridFactory<Grid>;
   // auto grid = Factory2::createSimplexGrid({0.0,0.0}, {1.0,1.0},
@@ -524,14 +550,6 @@ int main(int argc, char** argv)
 
   AdaptInfo adaptInfo("adapt");
 
-  N = Parameters::get<int>("vpfc->N").value_or(1);
-  v0 = Parameters::get<double>("vpfc->v0").value_or(200);
-  cooldown = Parameters::get<int>("vpfc->cooldown").value_or(5);
-  domain = Parameters::get<int>("vpfc->domain").value();
-  addVacancy = Parameters::get<bool>("vpfc->add vacancy").value_or(true);
-  addNoise = Parameters::get<bool>("vpfc->add noise").value_or(true);
-  noiseSigma = Parameters::get<double>("vpfc->noise sigma").value();
-  double scale_ = Parameters::get<double>("scale").value_or(1.0);
 
   setDensityOperators(prob, probInstat, u);
   setInitValues(prob, adaptInfo, u);
