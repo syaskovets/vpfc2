@@ -74,8 +74,8 @@ struct CellPeakProp {
   double phi; double dd_phi;
 };
 
-double v0XInit[] = {1.0, -1.0};
-double v0YInit[] = {0.0, 0.0};
+double v0XInit[100];
+double v0YInit[100];
 
 std::vector<CellPeakProp> peaks;
 std::vector<CellPeakProp> particles;
@@ -102,6 +102,8 @@ public:
     // y[1][0] =  posX2 + 0.00001*(rand()%100-50);
     // y[1][1] =  posY2 + 0.00001*(rand()%100-50);
 
+    v0XInit[0] = 1.0; v0XInit[0] = -1.0;
+    v0YInit[0] = 0.0; v0YInit[0] = 0.0;
   }
 
   template <typename T>
@@ -137,6 +139,14 @@ public:
 
     compression = Parameters::get<double>("vpfc->c").value();    
     bc = Parameters::get<double>("vpfc->bc").value();
+
+    for (int i = 0; i < N; ++i)
+    {
+      double alpha = std::rand()%360;
+
+      double v_x = cos(alpha * M_PI / 180.0); v0XInit[i] = v_x;
+      double v_y = sin(alpha * M_PI / 180.0); v0YInit[i] = v_y;
+    }
 
     int Nx = floor(sqrt(N)+0.5);
     int Ny = floor(sqrt(N)) + ((N%(Nx*Nx)>0) ? 1 : 0) ;
@@ -379,8 +389,8 @@ void setInitValues(ProblemStat<Param>& prob, AdaptInfo& adaptInfo, DOFVectorType
   auto phi = prob.solution(0);
   auto psi = prob.solution(1);
 
-  // NgridOrientedDots fct;
-  G2fix fct;
+  NgridOrientedDots fct;
+  // G2fix fct;
 
   double density;
   double B0 = integrate(constant(1.0), prob.gridView(), 6);

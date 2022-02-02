@@ -9,7 +9,7 @@ vpfc->H: 10000
 vpfc->K: 0.05
 vpfc->mobility: 200
 vpfc->mobility v: 40
-vpfc->N: 2
+vpfc->N: 9
 vpfc->cooldown: 3
 vpfc->N2: 9
 vpfc->add vacancy: 1
@@ -67,4 +67,4 @@ vpfc->output[2]->animation:          1
 
 adapt->timestep:    0.001
 adapt->start time:  0.0
-adapt->end time:    0.5
+adapt->end time:    5.0
