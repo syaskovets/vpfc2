@@ -35,6 +35,7 @@ lattice:          4
 %vpfc->dimension:        [${scale},${scale}]
 
 vpfc->bc: 0  % 0: periodic 1: dirichlet
+vpfc->domain: 1  % 0: rectangular 1: circular
 
 vpfc->mesh:                       vpfcMesh
 vpfc->solver:                     direct

@@ -59,7 +59,7 @@ using Param = LagrangeBasis<Grid, 1, 1, 1>;
 double K;
 double q, r, H, M;
 double c1, c2, beta, v0;
-int N, cooldown;
+int N, cooldown, domain;
 bool addVacancy = true;
 bool addNoise = false;
 double noiseSigma;
@@ -461,8 +461,20 @@ void setDensityOperators(ProblemStat<Param>& prob, MyProblemInstat<Param>& probI
 
   std::cout << " params " << q << " " << r << " " << H << std::endl;
   std::cout << "setBounderyConditions " << scale[0] << " " << scale[1] << std::endl;
-  auto op1BC = zot(-H*(tanh(100*(pow<20>(X(0)/scale[0])+pow<20>(X(1)/scale[1])-0.99))+1), 6);
-  prob.addMatrixOperator(op1BC,1,0);  
+
+  // rectangular or circular domain
+  if (domain == 0)
+  {
+    auto op1BC = zot(-H*(tanh(100*(pow<20>(X(0)/scale[0])+pow<20>(X(1)/scale[1])-0.99))+1), 6);
+    prob.addMatrixOperator(op1BC,1,0);
+  }
+  else if (domain == 1)
+  {
+    auto op1BC = zot(-H*(tanh(100*(pow<20>(pow<2>(X(0)/scale[0])+pow<2>(X(1)/scale[1]))-0.99))+1), 6);
+    prob.addMatrixOperator(op1BC,1,0);
+  }
+  else
+    std::cout << "ERROR: unrecognized domain!\n";
 }
 
 
@@ -515,6 +527,7 @@ int main(int argc, char** argv)
   N = Parameters::get<int>("vpfc->N").value_or(1);
   v0 = Parameters::get<double>("vpfc->v0").value_or(200);
   cooldown = Parameters::get<int>("vpfc->cooldown").value_or(5);
+  domain = Parameters::get<int>("vpfc->domain").value();
   addVacancy = Parameters::get<bool>("vpfc->add vacancy").value_or(true);
   addNoise = Parameters::get<bool>("vpfc->add noise").value_or(true);
   noiseSigma = Parameters::get<double>("vpfc->noise sigma").value();
