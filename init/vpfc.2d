@@ -47,21 +47,21 @@ vpfc->solver->info: 1
 
 vpfc->output[0]->format:             vtk
 vpfc->output[0]->filename:           phi.2d
-vpfc->output[0]->output directory:   output_vpfc
+vpfc->output[0]->output directory:   output
 vpfc->output[0]->name:               phi
 vpfc->output[0]->mode:               1
 vpfc->output[0]->animation:          1
 
 vpfc->output[1]->format:             vtk
 vpfc->output[1]->filename:           mu.2d
-vpfc->output[1]->output directory:   output_vpfc
+vpfc->output[1]->output directory:   output
 vpfc->output[1]->name:               mu
 vpfc->output[1]->mode:               1
 vpfc->output[1]->animation:          1
 
 vpfc->output[2]->format:             vtk
 vpfc->output[2]->filename:           psi.2d
-vpfc->output[2]->output directory:   output_vpfc
+vpfc->output[2]->output directory:   output
 vpfc->output[2]->name:               psi
 vpfc->output[2]->mode:               1
 vpfc->output[2]->animation:          1

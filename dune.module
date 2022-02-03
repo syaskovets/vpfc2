@@ -1,0 +1,10 @@
+################################
+# Dune module information file #
+################################
+
+Module: amdis-vpfc2
+Version: 0.1
+Maintainer: Serhii.Yaskovets@mailbox.tu-dresden.de
+
+Depends: amdis
+Suggests: dune-alugrid dune-vtk
