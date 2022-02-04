@@ -233,8 +233,8 @@ const AMDiS::AdaptiveGrid<Dune::ALUGrid<2, 2, Dune::simplex, Dune::conforming> >
 // const AMDiS::AdaptiveGrid<Dune::ALUGrid<2, 2, Dune::simplex, Dune::conforming> > > >, 1, double>, 8> >;
 
 
-template <class B, class GF, class TP, class NTRE>
-void iterateTreeSubset(B const& basis, GF const& gf, TP const& treePath, NTRE const& nodeToRangeEntry)
+template <class B, class GF, class TP>
+void iterateTreeSubset(B const& basis, GF const& gf, TP const& treePath)
 {
   auto lf = localFunction(gf);
   auto localView = basis.localView();
@@ -249,18 +249,9 @@ void iterateTreeSubset(B const& basis, GF const& gf, TP const& treePath, NTRE co
     {
       using Traits = typename TYPEOF(node)::FiniteElement::Traits::LocalBasisType::Traits;
       using RangeField = typename Traits::RangeFieldType;
-
-      auto&& fe = node.finiteElement();
-
-      // extract component of local function result corresponding to node in tree
-      auto localFj = [&](auto const& local)
-      {
-        const auto& tmp = lf(local);
-        return nodeToRangeEntry(node, tp, Dune::MatVec::as_vector(tmp));
-      };
-
       thread_local std::vector<RangeField> interpolationCoeff;
-      fe.localInterpolation().interpolate(localFj, interpolationCoeff);
+
+      node.finiteElement().localInterpolation().interpolate(AMDiS::HierarchicNodeWrapper{tp,lf}, interpolationCoeff);
     });
   }
 }
@@ -272,9 +263,8 @@ void applyComposerGridFunction(DiscreteFunction<Coeff, GB, TreePath, R>& df, Exp
   const auto & basis = df.basis();
   auto const& treePath = df.treePath();
   auto&& gf = makeGridFunction(FWD(expr), basis.gridView());
-  auto ntrm = AMDiS::HierarchicNodeToRangeMap();
 
-  iterateTreeSubset(basis, gf, treePath, ntrm);
+  iterateTreeSubset(basis, gf, treePath);
 }
 
 template <class... Args>
