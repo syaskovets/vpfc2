@@ -4,6 +4,7 @@
 #include <iostream>
 #include <vector>
 #include <utility>
+#include <fstream>
 
 #include <amdis/AMDiS.hpp>
 #include <amdis/AdaptInstationary.hpp>
@@ -62,13 +63,18 @@ double c1, c2, beta, v0;
 int N, cooldown, domain, bc;
 bool addVacancy = true;
 bool addNoise = false;
+bool logParticles = false;
+std::string logParticlesFname;
 double noiseSigma, compression;
 
 FieldVector<double,2> scale;
 
 using GridView = Grid::LeafGridView;
 
+// id is double as it is later used in FieldVector<double,3>
+// should be size_t ideally
 struct CellPeakProp {
+  double id;
   double x; double y;
   double v_x; double v_y;
   double phi; double dd_phi;
@@ -273,20 +279,29 @@ void applyComposerGridFunction(DiscreteFunction<Coeff, GB, TreePath, R>& df, Exp
 
 template <class... Args>
 static auto create(const Args&... args) {
-  return AMDiS::GlobalBasis{args..., power<2>(lagrange<1>())};
+  return AMDiS::GlobalBasis{args..., power<3>(lagrange<1>())};
 }
 
 template <class Traits>
 class MyProblemInstat : public ProblemInstat<Traits> {
   int iter;
   bool vInit;
+  std::ofstream logFile;
 
+  // particle id is incorporated into the velocity field
+  // to save additional iteration loop
   typedef decltype(create(std::declval<typename ProblemStat<Traits>::GridView>())) u_type;
   DOFVector<u_type>& u;
 
   public:
     MyProblemInstat(std::string const& name, ProblemStat<Traits>& prob, DOFVector<u_type>& u)
-      : iter(0), vInit(false), ProblemInstat<Traits>(name, prob), u(u) {}
+      : iter(0), vInit(false), ProblemInstat<Traits>(name, prob), u(u) {
+        if (logParticles) logFile.open(logParticlesFname);
+    }
+
+    ~MyProblemInstat() {
+        if (logParticles) logFile.close();
+    }
 
     void closeTimestep(AdaptInfo& adaptInfo) {
       auto phi = this->problemStat_->solution(0);
@@ -315,7 +330,7 @@ class MyProblemInstat : public ProblemInstat<Traits> {
         auto f1 = invokeAtQP([&](auto phi_x, auto dd_p_x, auto v, auto const& x) {
           // consider only ampls within 20% of the max (min_mu)
           if ((min_mu-dd_p_x[0])/min_mu < 0.2) {
-            peaks.push_back(CellPeakProp{x[0], x[1], v[0], v[1], phi_x[0], dd_p_x[0]});
+            peaks.push_back(CellPeakProp{v[2], x[0], x[1], v[0], v[1], phi_x[0], dd_p_x[0]});
             return 1;
           }
 
@@ -376,12 +391,14 @@ class MyProblemInstat : public ProblemInstat<Traits> {
 
             double phi_x_norm = phi_x / particles[min_dist_i].phi;
 
+            // particle id is incorporated into the velocity field
+            // to save additional iteration loop
             if (vInit)
-              return FieldVector<double,2>{phi_x_norm*particles[min_dist_i].v_x, phi_x_norm*particles[min_dist_i].v_y};
+              return FieldVector<double,3>{phi_x_norm*particles[min_dist_i].v_x, phi_x_norm*particles[min_dist_i].v_y, particles[min_dist_i].id};
             else
-              return FieldVector<double,2>{phi_x_norm*v0XInit[min_dist_i], phi_x_norm*v0YInit[min_dist_i]};
+              return FieldVector<double,3>{phi_x_norm*v0XInit[min_dist_i], phi_x_norm*v0YInit[min_dist_i], min_dist_i};
           }
-          return FieldVector<double,2>{0, 0};
+          return FieldVector<double,3>{0, 0, 0};
         }, phi, X());
 
         if (!vInit)
@@ -393,6 +410,16 @@ class MyProblemInstat : public ProblemInstat<Traits> {
       for (int k = 0; k < 5; ++k) {
         this->problemStat_-> markElements(adaptInfo);
         this->problemStat_-> adaptGrid(adaptInfo);
+      }
+
+      if (logParticles) {
+        logFile << "Time: " << this->time_ << "\n";
+        for (size_t i = 0; i < particles.size(); ++i)
+        {
+          logFile << "\t" << particles[i].id << " " << particles[i].x << " " << particles[i].y \
+                  << " " << particles[i].v_x << " " << particles[i].v_y << "\n";
+        }
+        logFile.flush();
       }
 
       ProblemInstat<Traits>::closeTimestep(adaptInfo);
@@ -454,12 +481,17 @@ void setDensityOperators(ProblemStat<Param>& prob, MyProblemInstat<Param>& probI
   auto phiOld = probInstat.oldSolution(0);
   auto invTau = std::ref(probInstat.invTau());
 
+  tag::partial der0, der1;
+  der0.comp = 0;
+  der1.comp = 1;
+
   prob.addMatrixOperator(sot(M), 0, 1);
   prob.addMatrixOperator(sot(1), 1, 2);
   prob.addMatrixOperator(sot(1), 2, 0);
   prob.addMatrixOperator(zot(invTau), 0, 0);
   prob.addVectorOperator(zot(phiOld * invTau), 0);
-  prob.addVectorOperator(zot(-v0*valueOf(u)* derivativeOf(valueOf(phi), tag::gradient{})), 0);
+  prob.addVectorOperator(zot(-v0*valueOf(u,0)* derivativeOf(valueOf(phi), der0)), 0);
+  prob.addVectorOperator(zot(-v0*valueOf(u,1)* derivativeOf(valueOf(phi), der1)), 0);
   prob.addMatrixOperator(zot(1.0), 1, 1);
 
   // !sot?
@@ -514,6 +546,8 @@ int main(int argc, char** argv)
   addVacancy = Parameters::get<bool>("vpfc->add vacancy").value_or(true);
   addNoise = Parameters::get<bool>("vpfc->add noise").value_or(true);
   noiseSigma = Parameters::get<double>("vpfc->noise sigma").value();
+  logParticles = Parameters::get<bool>("vpfc->log particles").value_or(false);
+  if (logParticles) logParticlesFname = Parameters::get<std::string>("vpfc->log particles fname").value();
   // Dune::YaspGrid<2> grid(Dune::FieldVector<double, 2>({2*scale[0], 2*scale[1]}), {2u, 2u});
   // using Factory2 = Dune::StructuredGridFactory<Grid>;
   // auto grid = Factory2::createSimplexGrid({0.0,0.0}, {1.0,1.0},
@@ -543,7 +577,7 @@ int main(int argc, char** argv)
   ProblemStat<Param> prob("vpfc", grid);
   prob.initialize(INIT_ALL);
 
-  DOFVector u(prob.gridView(), power<2>(lagrange<1>()));
+  DOFVector u(prob.gridView(), power<3>(lagrange<1>()));
 
   MyProblemInstat<Param> probInstat("vpfc", prob, u);
   probInstat.initialize(INIT_UH_OLD);
