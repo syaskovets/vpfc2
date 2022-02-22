@@ -108,8 +108,8 @@ public:
     // y[1][0] =  posX2 + 0.00001*(rand()%100-50);
     // y[1][1] =  posY2 + 0.00001*(rand()%100-50);
 
-    v0XInit[0] = 1.0; v0XInit[0] = -1.0;
-    v0YInit[0] = 0.0; v0YInit[0] = 0.0;
+    v0XInit[0] = 1.0; v0XInit[1] = -1.0;
+    v0YInit[0] = 0.0; v0YInit[1] = 0.0;
   }
 
   template <typename T>
