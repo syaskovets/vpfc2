@@ -556,7 +556,7 @@ int main(int argc, char** argv)
   const FieldVector < double, 2 > upper = {scale[0], scale[1]};
 
   std::shared_ptr < Grid > grid = Dune::StructuredGridFactory < Grid > ::createSimplexGrid(lower, upper, n);
-
+  grid->loadBalance();
 
   // using GridView = Grid::LeafGridView;
   // GridView gridView = grid -> leafGridView();
