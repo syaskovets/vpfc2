@@ -17,7 +17,9 @@
 #include <dune/alugrid/grid.hh>
 #include <dune/grid/uggrid.hh>
 #include <dune/grid/utility/structuredgridfactory.hh>
+#include <dune/common/parallel/mpihelper.hh>
 #include <typeinfo>
+#include <mpi.h>
 
 std::pair<double, double> generateGaussianNoise(double mu, double sigma)
 {
@@ -108,8 +110,8 @@ public:
     // y[1][0] =  posX2 + 0.00001*(rand()%100-50);
     // y[1][1] =  posY2 + 0.00001*(rand()%100-50);
 
-    v0XInit[0] = 1.0; v0XInit[1] = -1.0;
-    v0YInit[0] = 0.0; v0YInit[1] = 0.0;
+    v0XInit[0] = 1.0; v0XInit[0] = -1.0;
+    v0YInit[0] = 0.0; v0YInit[0] = 0.0;
   }
 
   template <typename T>
@@ -277,6 +279,7 @@ class MyProblemInstat : public ProblemInstat<Traits> {
   int iter;
   bool vInit;
   std::ofstream logFile;
+  const Dune::MPIHelper& mpiHelper;
 
   // particle id is incorporated into the velocity field
   // to save additional iteration loop
@@ -284,8 +287,8 @@ class MyProblemInstat : public ProblemInstat<Traits> {
   DOFVector<u_type>& u;
 
   public:
-    MyProblemInstat(std::string const& name, ProblemStat<Traits>& prob, DOFVector<u_type>& u)
-      : iter(0), vInit(false), ProblemInstat<Traits>(name, prob), u(u) {
+    MyProblemInstat(std::string const& name, ProblemStat<Traits>& prob, DOFVector<u_type>& u, const Dune::MPIHelper& mpiHelper)
+      : iter(0), vInit(false), ProblemInstat<Traits>(name, prob), u(u), mpiHelper(mpiHelper) {
         if (logParticles) logFile.open(logParticlesFname);
     }
 
@@ -328,6 +331,9 @@ class MyProblemInstat : public ProblemInstat<Traits> {
         }, phi, mu, u_df, X());
 
         applyComposerGridFunction(phi, f1);
+
+        if (mpiHelper.size() > 1)
+          exchgPeaksMPI();
 
         // sort peaks by second derivative ampl
         std::sort(peaks.begin(), peaks.end(), [](auto &left, auto &right) {
@@ -402,7 +408,7 @@ class MyProblemInstat : public ProblemInstat<Traits> {
         this->problemStat_-> adaptGrid(adaptInfo);
       }
 
-      if (logParticles) {
+      if (logParticles && mpiHelper.rank() == 0) {
         logFile << "Time: " << this->time_ << "\n";
         for (size_t i = 0; i < particles.size(); ++i)
         {
@@ -413,6 +419,68 @@ class MyProblemInstat : public ProblemInstat<Traits> {
       }
 
       ProblemInstat<Traits>::closeTimestep(adaptInfo);
+    }
+
+    void exchgPeaksMPI() {
+      // MPI_Comm comm;
+      int gsize;
+      int *recvcounts, *displs;
+
+      MPI_Comm_size(mpiHelper.getCommunicator(), &gsize);
+
+      int locPeaksN, *globPeaksN;
+      globPeaksN = (int *)malloc(gsize*1*sizeof(CellPeakProp));
+
+      locPeaksN = peaks.size();
+      // exchange peaks local array size
+      MPI_Allgather(&locPeaksN, 1, MPI_INT, globPeaksN, 1, MPI_INT, mpiHelper.getCommunicator());
+
+      recvcounts = (int *)malloc(gsize*sizeof(CellPeakProp));
+      displs = (int *)malloc(gsize*sizeof(CellPeakProp));
+
+      int TotalPeaksN = 0;
+
+      for (int i=0; i<gsize; ++i) {
+        int _N = globPeaksN[i];
+
+        displs[i] = TotalPeaksN;
+        recvcounts[i] = _N;
+        TotalPeaksN += _N;
+      }
+
+      // rbuf = (CellPeakProp *)malloc(TotalPeaksN*sizeof(CellPeakProp));
+      std::vector<CellPeakProp> rbuf(TotalPeaksN);
+
+      // MPI type for a CellPeakProp struct
+      const int nitems = 7;
+      int blocklengths[7] = {1,1,1,1,1,1,1};
+      MPI_Datatype types[7] = {MPI_DOUBLE,MPI_DOUBLE,MPI_DOUBLE,MPI_DOUBLE,MPI_DOUBLE,MPI_DOUBLE,MPI_DOUBLE};
+      MPI_Datatype CellPeakProp_type;
+      MPI_Aint offsets[7];
+
+      offsets[0] = offsetof(CellPeakProp, id);
+      offsets[1] = offsetof(CellPeakProp, x);
+      offsets[2] = offsetof(CellPeakProp, y);
+      offsets[3] = offsetof(CellPeakProp, v_x);
+      offsets[4] = offsetof(CellPeakProp, v_y);
+      offsets[5] = offsetof(CellPeakProp, phi);
+      offsets[6] = offsetof(CellPeakProp, dd_phi);
+
+      MPI_Type_create_struct(nitems, blocklengths, offsets, types, &CellPeakProp_type);
+      MPI_Type_commit(&CellPeakProp_type);
+
+      MPI_Allgatherv(&peaks[0], peaks.size(), CellPeakProp_type, &rbuf[0], recvcounts, displs, CellPeakProp_type, mpiHelper.getCommunicator());
+      peaks = rbuf;
+
+      MPI_Type_free(&CellPeakProp_type);
+
+      if (mpiHelper.rank() == 0) {
+        for (int j = 0; j < TotalPeaksN; ++j)
+        {
+          CellPeakProp temp = peaks[j];
+          std::cout << j << " ! " << temp.id << " " << temp.x << " " << temp.y << " " << temp.v_x << " " << temp.v_y << " " << temp.phi << " " << temp.dd_phi << "\n";
+        }
+      }
     }
 };
 
@@ -515,10 +583,10 @@ void setDensityOperators(ProblemStat<Param>& prob, MyProblemInstat<Param>& probI
 }
 
 
-int main(int argc, char** argv)
-{
+int main(int argc, char** argv) {
   Environment env(argc, argv);
-  
+  const Dune::MPIHelper& mpiHelper = Dune::MPIHelper::instance(argc,argv);
+
   double Nl = Parameters::get<int>("Nl").value_or(4);
   double lattice = Parameters::get<int>("lattice").value();
 
@@ -569,17 +637,15 @@ int main(int argc, char** argv)
 
   DOFVector u(prob.gridView(), power<3>(lagrange<1>()));
 
-  MyProblemInstat<Param> probInstat("vpfc", prob, u);
+  MyProblemInstat<Param> probInstat("vpfc", prob, u, mpiHelper);
   probInstat.initialize(INIT_UH_OLD);
 
   AdaptInfo adaptInfo("adapt");
-
 
   setDensityOperators(prob, probInstat, u);
   setInitValues(prob, adaptInfo, u);
 
   AdaptInstationary adapt("adapt", prob, adaptInfo, probInstat, adaptInfo);
   adapt.adapt();
-
   return 0;
 }
