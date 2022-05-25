@@ -59,9 +59,7 @@ using Param = LagrangeBasis<Grid, 1, 1, 1>;
 // using VpfcProblem = ProblemStat<VpfcParam>;
 // using VpfcProblemInstat = ProblemInstat<VpfcParam>;
 
-double K;
-double q, r, H, M;
-double c1, c2, beta, v0;
+double q, r, H, M, v0;
 int N, cooldown, domain, bc;
 bool addVacancy = true;
 bool addNoise = false;
@@ -594,7 +592,6 @@ int main(int argc, char** argv) {
   double _scale = Nl*lattice;
   scale = FieldVector<double,2>({_scale, _scale});
 
-  K = Parameters::get<double>("vpfc->K").value();
   N = Parameters::get<int>("vpfc->N").value_or(1);
   v0 = Parameters::get<double>("vpfc->v0").value_or(200);
   cooldown = Parameters::get<int>("vpfc->cooldown").value_or(5);
