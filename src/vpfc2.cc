@@ -369,6 +369,12 @@ class MyProblemInstat : public ProblemInstat<Traits> {
           std::cout << "Error!!! " << std::endl;
         }
 
+        // WS - weighted sum
+        std::vector<FieldVector<double,2>> particleWSPositions;
+        std::vector<double> particleWSPositionsTotal;
+        particleWSPositions.resize(particles.size());
+        particleWSPositionsTotal.resize(particles.size());
+
         u_df << invokeAtQP([&](auto phi_x, auto const& x) {
           if (phi_x > (0.00001))
           {
@@ -385,6 +391,10 @@ class MyProblemInstat : public ProblemInstat<Traits> {
 
             double phi_x_norm = phi_x / particles[min_dist_i].phi;
 
+            particleWSPositions[min_dist_i][0] += x[0] * phi_x;
+            particleWSPositions[min_dist_i][1] += x[1] * phi_x;
+            particleWSPositionsTotal[min_dist_i] += phi_x;
+
             // particle id is incorporated into the velocity field
             // to save additional iteration loop
             if (vInit)
@@ -394,6 +404,13 @@ class MyProblemInstat : public ProblemInstat<Traits> {
           }
           return FieldVector<double,3>{0, 0, 0};
         }, phi, X());
+
+        // compute particle locations as weighted sums of all non-zero phi elements
+        for (int i = 0; i < particles.size(); ++i)
+        {
+          particles[i].x = particleWSPositions[i][0] / particleWSPositionsTotal[i];
+          particles[i].y = particleWSPositions[i][1] / particleWSPositionsTotal[i];
+        }
 
         if (!vInit)
           vInit = true;
