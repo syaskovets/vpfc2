@@ -1,0 +1,26 @@
+dimension of world:   2
+
+{% for key in parameters -%}
+{{problem}}->{{ key }}: {{ parameters[key] }}
+{% endfor %}
+
+{% for key in domain -%}
+{{ key }}: {{ domain[key] }}
+{% endfor %}
+
+{% for key in solver -%}
+{{problem}}->{{ key }}: {{ solver[key] }}
+{% endfor %}
+
+{% for key in output -%}
+{{problem}}->output[{{loop.index-1}}]->format:             vtk
+{{problem}}->output[{{loop.index-1}}]->filename:           {{key}}.2d
+{{problem}}->output[{{loop.index-1}}]->output directory:   {{ basic["folder"] }}/output
+{{problem}}->output[{{loop.index-1}}]->name:               {{key}}
+{{problem}}->output[{{loop.index-1}}]->mode:               1
+{{problem}}->output[{{loop.index-1}}]->animation:          1
+{% endfor %}
+
+{% for key in adapt -%}
+adapt->{{ key }}: {{ adapt[key] }}
+{% endfor %}
