@@ -49,8 +49,8 @@ with open(os.path.join(folder_path,"run.sh"), "w") as f:
         f.write("#SBATCH --account wir \n")
         f.write("ulimit -s unlimited \n")
         f.write("source /scratch/ws/0/seya960b-thesis/.bashrc_local \n")
-        f.write("module load SuiteSparse/5.7.1-foss-2020a-METIS-5.1.0 \n")
-        f.write("module load CMake/3.16.4-GCCcore-9.3.0 \n")
+        f.write("module load OpenMPI/3.1.6-GCC-8.3.0 \n")
+        f.write("module load CMake/3.15.3-GCCcore-8.3.0 \n")
         f.write("./build-cmake/src/vpfc2 " + os.path.join(folder_path,"init.2d") + "\n")
         # f.write("srun build-cmake/src/vpfc2 " + os.path.join(folder_path,"init.2d") + "\n")
 
