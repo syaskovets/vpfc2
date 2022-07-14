@@ -49,11 +49,11 @@ using namespace Dune::Functions::BasisFactory;
 
 // using Grid = Dune::YaspGrid<2, Dune::EquidistantOffsetCoordinates<double,2>>;
 // using Grid = Dune::UGGrid<2>;
-using Grid = Dune::ALUGrid<2,2,Dune::simplex,Dune::conforming>;
-using Param = LagrangeBasis<Grid, 1, 1, 1>;
+// using Grid = Dune::ALUGrid<2,2,Dune::simplex,Dune::conforming>;
+using Grid = Dune::AlbertaGrid<GRIDDIM, WORLDDIM>;
+using Param = LagrangeBasis<Grid, 2, 2, 2>;
 
 // using Grid = Dune::YaspGrid<2>;
-// using Grid = Dune::AlbertaGrid<GRIDDIM, WORLDDIM>;
 // using Param = LagrangeBasis<Grid, 1, 1, 1>;
 // using VpfcParam   = YaspGridBasis<GRIDDIM, 2>;
 // using VpfcProblem = ProblemStat<VpfcParam>;
@@ -108,8 +108,8 @@ public:
     // y[1][0] =  posX2 + 0.00001*(rand()%100-50);
     // y[1][1] =  posY2 + 0.00001*(rand()%100-50);
 
-    v0XInit[0] = 1.0; v0XInit[0] = -1.0;
-    v0YInit[0] = 0.0; v0YInit[0] = 0.0;
+    v0XInit[0] = 1.0; v0XInit[1] = -1.0;
+    v0YInit[0] = 0.0; v0YInit[1] = 0.0;
   }
 
   template <typename T>
@@ -151,22 +151,20 @@ public:
       double v_y = sin(alpha * M_PI / 180.0); v0YInit[i] = v_y;
     }
 
-    int Nx = floor(sqrt(N)+0.5);
-    int Ny = floor(sqrt(N)) + ((N%(Nx*Nx)>0) ? 1 : 0) ;
-
-    double dx = 2*scale[0]/(Nx)*compression;
-    double dy = 2*scale[1]/(Ny)*compression;
-    int cntr = 0;
-
-    std::cout << "N " << N << " scale[0] " << scale[0] << " compression " << compression << " Nx " << Nx << " dx " << dx << " dy " << dy << std::endl;
-
     // initalizing a regular grid 
     // adding a noise on each grid point 
     // using the first N grid points 
 
+    int cntr = 0;
 
     if (domain == 0)
     {
+      int Nx = floor(sqrt(N)+0.5);
+      int Ny = floor(sqrt(N)) + ((N%(Nx*Nx)>0) ? 1 : 0) ;
+
+      double dx = 2*scale[0]/(Nx)*compression;
+      double dy = 2*scale[1]/(Ny)*compression;
+
       for (int i=0; i<Nx ; i++)
         for (int j=0; j<Ny ; j++){
           y[cntr][0] = -scale[0]*compression + 0.5*dx + i*dx;// + dx*0.002*dis*(rand()%1000-500) ;
@@ -176,22 +174,29 @@ public:
           cntr++;
         }
     }
-    else if (domain == 1) {
+    else if (domain == 1)
+    {
+      int Nx = floor(sqrt(N)+0.5);
+      int Ny = floor(sqrt(N)) ;
+
+      double dx = 2*scale[0]/(Nx)*compression;
+      double dy = 2*scale[1]/(Ny)*compression;
+
       int i = 0; int j = 0;
       double _x = 0; double _y = 0;
 
       while (cntr < N) {
-        _x = -scale[0]*compression + 0.5*dx + i*dx;
-        _y = -scale[1]*compression + 0.5*dx + j*dy;
+        _x = -scale[0]*compression - 0.5*dx + i*dx;
+        _y = -scale[1]*compression - 0.5*dy + j*dy;
 
-        if ((_x/scale[0])*(_x/scale[0])+(_y/scale[1])*(_y/scale[1]) < 1) {
+        if (pow(-1+(2.0/Nx)*(-0.5+i),2) + pow(-1+(2.0/Ny)*(-0.5+j),2) < 1.4) {
           y[cntr][0] = _x;
           y[cntr][1] = _y;
 
           cntr++;
         }
 
-        ++j; if (j == Ny) {j = 0; ++i;}
+        ++j; if (_y > scale[1]) {j = 0; ++i;}
       }
     }
   }
@@ -239,7 +244,7 @@ void iterateTreeSubset(B const& basis, GF const& gf, TP const& treePath)
   auto lf = localFunction(gf);
   auto localView = basis.localView();
 
-  for (const auto& e : elements(basis.gridView(), typename BackendTraits<B>::PartitionSet{}))
+  for (const auto& e : elements(basis.gridView()))
   {
     localView.bind(e);
     lf.bind(e);
@@ -369,7 +374,7 @@ class MyProblemInstat : public ProblemInstat<Traits> {
           std::cout << "Error!!! " << std::endl;
         }
 
-        // WS - weighted sum
+        // arrays used to store weighted sum particle locations
         std::vector<FieldVector<double,2>> particleWSPositions;
         std::vector<double> particleWSPositionsTotal;
         particleWSPositions.resize(particles.size());
@@ -499,13 +504,10 @@ class MyProblemInstat : public ProblemInstat<Traits> {
     }
 };
 
-template <typename DOFVectorType>
-void setInitValues(ProblemStat<Param>& prob, AdaptInfo& adaptInfo, DOFVectorType& u) {
+template <typename DOFVectorType, typename FuncType>
+void setInitValues(ProblemStat<Param>& prob, AdaptInfo& adaptInfo, DOFVectorType& u, FuncType& fct) {
   auto phi = prob.solution(0);
   auto psi = prob.solution(1);
-
-  NgridOrientedDots fct;
-  // G2fix fct;
 
   double density;
   double B0 = integrate(constant(1.0), prob.gridView(), 6);
@@ -590,7 +592,7 @@ void setDensityOperators(ProblemStat<Param>& prob, MyProblemInstat<Param>& probI
   }
   else if (domain == 1)
   {
-    auto op1BC = zot(-H*(tanh(100*(pow<20>(pow<2>(X(0)/scale[0])+pow<2>(X(1)/scale[1]))-0.99))+1), 6);
+    auto op1BC = zot(-H*(tanh(100*(pow<10>(pow<2>(X(0)/scale[0])+pow<2>(X(1)/scale[1]))-0.99))+1), 6);
     prob.addMatrixOperator(op1BC,1,0);
   }
   else
@@ -638,7 +640,7 @@ int main(int argc, char** argv) {
   const FieldVector < double, 2 > upper = {scale[0], scale[1]};
 
   std::shared_ptr < Grid > grid = Dune::StructuredGridFactory < Grid > ::createSimplexGrid(lower, upper, n);
-  grid->loadBalance();
+  // grid->loadBalance();
 
   // using GridView = Grid::LeafGridView;
   // GridView gridView = grid -> leafGridView();
@@ -657,7 +659,14 @@ int main(int argc, char** argv) {
   AdaptInfo adaptInfo("adapt");
 
   setDensityOperators(prob, probInstat, u);
-  setInitValues(prob, adaptInfo, u);
+
+  if (N == 2) {
+    G2fix fct;
+    setInitValues(prob, adaptInfo, u, fct);
+  } else {
+    NgridOrientedDots fct;
+    setInitValues(prob, adaptInfo, u, fct);
+  }
 
   AdaptInstationary adapt("adapt", prob, adaptInfo, probInstat, adaptInfo);
   adapt.adapt();
