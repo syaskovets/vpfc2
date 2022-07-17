@@ -77,7 +77,21 @@ struct CellPeakProp {
   double id;
   double x; double y;
   double v_x; double v_y;
+  // rv stands for real velocity
+  // as opposed to unit velocity field
+  double rv_x; double rv_y;
   double phi; double dd_phi;
+
+  CellPeakProp()
+  : id(-1), x(0), y(0), v_x(0), v_y(0), rv_x(0), rv_y(0), phi(0), dd_phi(0) {}
+
+  CellPeakProp(
+    double id,
+    double x, double y,
+    double v_x, double v_y,
+    double rv_x, double rv_y,
+    double phi, double dd_phi)
+  : id(id), x(x), y(y), v_x(v_x), v_y(v_y), rv_x(rv_x), rv_y(rv_y), phi(phi), dd_phi(dd_phi) {}
 };
 
 double v0XInit[100];
@@ -85,6 +99,7 @@ double v0YInit[100];
 
 std::vector<CellPeakProp> peaks;
 std::vector<CellPeakProp> particles;
+std::vector<CellPeakProp> particlesOld;
 
 /// inital value function
 class G2fix
@@ -310,7 +325,6 @@ class MyProblemInstat : public ProblemInstat<Traits> {
 
       if (++iter > cooldown) {
         peaks.clear();
-        particles.clear();
 
         double min_mu = 0.0;
 
@@ -323,10 +337,11 @@ class MyProblemInstat : public ProblemInstat<Traits> {
 
         applyComposerGridFunction(phi, f);
 
+
         auto f1 = invokeAtQP([&](auto phi_x, auto dd_p_x, auto v, auto const& x) {
           // consider only ampls within 20% of the max (min_mu)
           if ((min_mu-dd_p_x[0])/min_mu < 0.2) {
-            peaks.push_back(CellPeakProp{v[2], x[0], x[1], v[0], v[1], phi_x[0], dd_p_x[0]});
+            peaks.push_back(CellPeakProp{v[2], x[0], x[1], v[0], v[1], 0.0, 0.0, phi_x[0], dd_p_x[0]});
             return 1;
           }
 
@@ -343,6 +358,8 @@ class MyProblemInstat : public ProblemInstat<Traits> {
             return left.dd_phi < right.dd_phi;
         });
 
+        particles.clear();
+
         for(auto i = 0; i < peaks.size() || particles.size() < N; ++i) {
           bool insert = true;
 
@@ -354,8 +371,6 @@ class MyProblemInstat : public ProblemInstat<Traits> {
           if (insert)
             particles.push_back(peaks[i]);
         }
-
-        std::cout <<" particles.size() "<< particles.size() << " " << vInit << " " << addNoise << std::endl;
 
         if (vInit && addNoise) {
           for(auto i = 0; i < particles.size(); ++i) {
@@ -381,7 +396,7 @@ class MyProblemInstat : public ProblemInstat<Traits> {
         particleWSPositionsTotal.resize(particles.size());
 
         u_df << invokeAtQP([&](auto phi_x, auto const& x) {
-          if (phi_x > (0.00001))
+          if (phi_x > (0.000001))
           {
             double min_dist = dist(FieldVector<double,2>{particles[0].x, particles[0].y}, x);
             int min_dist_i = 0;
@@ -415,6 +430,19 @@ class MyProblemInstat : public ProblemInstat<Traits> {
         {
           particles[i].x = particleWSPositions[i][0] / particleWSPositionsTotal[i];
           particles[i].y = particleWSPositions[i][1] / particleWSPositionsTotal[i];
+
+          if (particlesOld.size())
+          {
+            particles[i].rv_x = particles[i].x - particlesOld[particles[i].id].x;
+            particles[i].rv_y = particles[i].y - particlesOld[particles[i].id].y;
+          }
+        }
+
+        if (vInit)
+        {
+          particlesOld.clear(); particlesOld.resize(N);
+          for (int i = 0; i < particles.size(); ++i)
+            particlesOld[particles[i].id] = particles[i];
         }
 
         if (!vInit)
@@ -433,7 +461,7 @@ class MyProblemInstat : public ProblemInstat<Traits> {
         for (size_t i = 0; i < particles.size(); ++i)
         {
           logFile << "\t" << particles[i].id << " " << particles[i].x << " " << particles[i].y \
-                  << " " << particles[i].v_x << " " << particles[i].v_y << "\n";
+                  << " " << particles[i].v_x << " " << particles[i].v_y << " " << particles[i].rv_x << " " << particles[i].rv_y << "\n";
         }
         logFile.flush();
       }
@@ -472,19 +500,21 @@ class MyProblemInstat : public ProblemInstat<Traits> {
       std::vector<CellPeakProp> rbuf(TotalPeaksN);
 
       // MPI type for a CellPeakProp struct
-      const int nitems = 7;
-      int blocklengths[7] = {1,1,1,1,1,1,1};
-      MPI_Datatype types[7] = {MPI_DOUBLE,MPI_DOUBLE,MPI_DOUBLE,MPI_DOUBLE,MPI_DOUBLE,MPI_DOUBLE,MPI_DOUBLE};
+      const int nitems = 9;
+      int blocklengths[9] = {1,1,1,1,1,1,1,1,1};
+      MPI_Datatype types[9] = {MPI_DOUBLE,MPI_DOUBLE,MPI_DOUBLE,MPI_DOUBLE,MPI_DOUBLE,MPI_DOUBLE,MPI_DOUBLE,MPI_DOUBLE,MPI_DOUBLE};
       MPI_Datatype CellPeakProp_type;
-      MPI_Aint offsets[7];
+      MPI_Aint offsets[9];
 
       offsets[0] = offsetof(CellPeakProp, id);
       offsets[1] = offsetof(CellPeakProp, x);
       offsets[2] = offsetof(CellPeakProp, y);
       offsets[3] = offsetof(CellPeakProp, v_x);
       offsets[4] = offsetof(CellPeakProp, v_y);
-      offsets[5] = offsetof(CellPeakProp, phi);
-      offsets[6] = offsetof(CellPeakProp, dd_phi);
+      offsets[5] = offsetof(CellPeakProp, rv_x);
+      offsets[6] = offsetof(CellPeakProp, rv_y);
+      offsets[7] = offsetof(CellPeakProp, phi);
+      offsets[8] = offsetof(CellPeakProp, dd_phi);
 
       MPI_Type_create_struct(nitems, blocklengths, offsets, types, &CellPeakProp_type);
       MPI_Type_commit(&CellPeakProp_type);
@@ -498,7 +528,8 @@ class MyProblemInstat : public ProblemInstat<Traits> {
         for (int j = 0; j < TotalPeaksN; ++j)
         {
           CellPeakProp temp = peaks[j];
-          std::cout << j << " ! " << temp.id << " " << temp.x << " " << temp.y << " " << temp.v_x << " " << temp.v_y << " " << temp.phi << " " << temp.dd_phi << "\n";
+          std::cout << j << " ! " << temp.id << " " << temp.x << " " << temp.y << " " << temp.v_x << " " << temp.v_y << " "
+                    << temp.rv_x << " " << temp.rv_y << " " << temp.phi << " " << temp.dd_phi << "\n";
         }
       }
     }
