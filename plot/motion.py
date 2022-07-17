@@ -115,7 +115,6 @@ label_particles_gui = False
 colormap_orientational = True
 
 t, prop_t = t_all[0], prop_all[0]
-patches = []
 
 for particle in range(len(prop_t)):
      # particle properties at time t
@@ -127,15 +126,11 @@ for particle in range(len(prop_t)):
 
      patch = ax.add_patch(circle)
      patch = ax.add_artist(circle)
-     patches += [circle]
      if label_particles_gui:
           text = ax.text(p_prop_t[0],p_prop_t[1],str(particle), color = "black")
           gui_artists[particle] = (circle, text)
      else:
           gui_artists[particle] = (circle)
-
-
-patch_segments = PatchCollection(patches)
 
 line_color = np.array([(0, orientation_vector[0][p][0], orientation_vector[0][p][1]) if colormap_orientational else particle_cmap[p] for p in range(len(prop_t))])
 velocity_segments = LineCollection(orient_ext_vector[0],
@@ -144,7 +139,6 @@ realVelocity_segments = LineCollection(realVelocity_vectors[0],
                           linestyles="solid", color="black")
 # ax.add_collection(velocity_segments)
 ax.add_collection(realVelocity_segments)
-ax.add_collection(patch_segments)
 
 
 def simData():
