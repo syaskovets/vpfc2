@@ -3,6 +3,7 @@ from matplotlib.collections import PatchCollection
 
 import os
 import math
+import sys
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -16,6 +17,10 @@ parser.add_argument("-i",
     help="Input config file", metavar="input", required=True)
 args = vars(parser.parse_args())
 
+label_particles_gui = False
+colormap_orientational = True
+# 1 for visual 0 for gif
+mode = 0
 
 def read_init(fname, prefix = "vpfc->"):
      params = dict()
@@ -111,8 +116,6 @@ ax3.set_ylabel(r'$\Phi_R$',fontsize=16)
 ax3.set_xlabel('t',fontsize=16)
 
 gui_artists = dict()
-label_particles_gui = False
-colormap_orientational = True
 
 t, prop_t = t_all[0], prop_all[0]
 
@@ -189,8 +192,14 @@ time_text = ax.text(0.05, 0.9, '', transform=ax.transAxes)
 
 #run animation
 # plt.gca().set_aspect('equal', adjustable='box')
-ani = anim.FuncAnimation(fig, simPoints, simData, interval=1, repeat=False)
+ani = anim.FuncAnimation(fig, simPoints, simData, interval=1, save_count=sys.maxsize, repeat=False)
 # ax2.autoscale(True)
 ani.event_source.stop()
 ax2.autoscale(enable=True, axis="y", tight=False)
-plt.show()
+if mode:
+     plt.show()
+else:
+     f = os.path.join(args["i"],"motion.mp4")
+     # writergif = anim.PillowWriter(fps=30)
+     # ani.save(f, writer=writergif)
+     ani.save(f, fps=30)
