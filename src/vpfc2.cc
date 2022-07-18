@@ -63,6 +63,7 @@ double q, r, H, M, v0;
 int N, cooldown, domain, bc;
 bool addVacancy = true;
 bool addNoise = false;
+bool runAndTumble = false;
 bool logParticles = false;
 std::string logParticlesFname;
 double noiseSigma, compression;
@@ -298,6 +299,10 @@ class MyProblemInstat : public ProblemInstat<Traits> {
   bool vInit;
   std::ofstream logFile;
   const Dune::MPIHelper& mpiHelper;
+  // time of last run and tumble for every particle
+  std::map<unsigned, double> rntTime;
+  std::default_random_engine generator;
+  std::uniform_real_distribution<double> distribution;
 
   // particle id is incorporated into the velocity field
   // to save additional iteration loop
@@ -306,8 +311,11 @@ class MyProblemInstat : public ProblemInstat<Traits> {
 
   public:
     MyProblemInstat(std::string const& name, ProblemStat<Traits>& prob, DOFVector<u_type>& u, const Dune::MPIHelper& mpiHelper)
-      : iter(0), vInit(false), ProblemInstat<Traits>(name, prob), u(u), mpiHelper(mpiHelper) {
+      : iter(0), vInit(false), ProblemInstat<Traits>(name, prob), u(u), mpiHelper(mpiHelper), distribution(0.0,1.0) {
         if (logParticles) logFile.open(logParticlesFname);
+
+        for (size_t i = 0; i < N; ++i)
+          rntTime[i] = 0.0;
     }
 
     ~MyProblemInstat() {
@@ -382,6 +390,27 @@ class MyProblemInstat : public ProblemInstat<Traits> {
 
             x = cos(alpha * M_PI / 180.0); particles[i].v_x = x;
             y = sin(alpha * M_PI / 180.0); particles[i].v_y = y;
+          }
+        }
+
+        int checkID = 0;
+
+        if (vInit && runAndTumble) {
+          for(auto i = 0; i < particlesOld.size(); ++i) {
+            if ((std::abs(particlesOld[i].rv_x) + std::abs(particlesOld[i].rv_y))/(this->tau_*v0) < 0.05) {
+              // std::cout << "particle " << i << " " << particlesOld[i].x << " " << particlesOld[i].y << " tumbles at " << this->time_ << " " << std::abs(particlesOld[i].rv_x+particlesOld[i].rv_y) << " " << this->tau_*v0 << " " << particlesOld[i].v_x << " "
+              // << particlesOld[i].v_y << " " << this->time_-rntTime[i] << std::endl;
+              double rn = distribution(generator);
+
+              for (size_t j = 0; j < particles.size(); ++j)
+                if (particles[j].id == i) {
+                  double x = cos(2*rn*M_PI); particles[j].v_x = x;
+                  double y = sin(2*rn*M_PI); particles[j].v_y = y;
+                  break;
+                }
+
+              rntTime[i] = this->time_;
+            }
           }
         }
 
@@ -650,6 +679,7 @@ int main(int argc, char** argv) {
   bc = Parameters::get<double>("vpfc->bc").value();
   addVacancy = Parameters::get<bool>("vpfc->add vacancy").value_or(true);
   addNoise = Parameters::get<bool>("vpfc->add noise").value_or(true);
+  runAndTumble = Parameters::get<bool>("vpfc->run and tumble").value_or(false);
   noiseSigma = Parameters::get<double>("vpfc->noise sigma").value();
   logParticles = Parameters::get<bool>("vpfc->log particles").value_or(false);
   if (logParticles) logParticlesFname = Parameters::get<std::string>("vpfc->log particles fname").value();
