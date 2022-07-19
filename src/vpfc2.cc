@@ -372,8 +372,8 @@ class MyProblemInstat : public ProblemInstat<Traits> {
           bool insert = true;
 
           for(auto it2 = particles.begin(); it2 != particles.end(); ++it2)
-            // 2 is an empirical min dist to filter out the same cells
-            if (dist(FieldVector<double,2>{peaks[i].x, peaks[i].y}, FieldVector<double,2>{it2->x,it2->y}) < 2)
+            // 2.5 is an empirical min dist to filter out the same cells
+            if (dist(FieldVector<double,2>{peaks[i].x, peaks[i].y}, FieldVector<double,2>{it2->x,it2->y}) < 2.5)
               insert = false;
 
           if (insert)
