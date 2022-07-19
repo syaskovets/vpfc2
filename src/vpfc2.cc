@@ -21,6 +21,8 @@
 #include <typeinfo>
 #include <mpi.h>
 
+// #define YASPGRID 1
+
 std::pair<double, double> generateGaussianNoise(double mu, double sigma)
 {
     constexpr double epsilon = std::numeric_limits<double>::epsilon();
@@ -47,10 +49,15 @@ std::pair<double, double> generateGaussianNoise(double mu, double sigma)
 using namespace AMDiS;
 using namespace Dune::Functions::BasisFactory;
 
-// using Grid = Dune::YaspGrid<2, Dune::EquidistantOffsetCoordinates<double,2>>;
 // using Grid = Dune::UGGrid<2>;
 // using Grid = Dune::ALUGrid<2,2,Dune::simplex,Dune::conforming>;
+
+#ifdef YASPGRID
+using Grid = Dune::YaspGrid<GRIDDIM, Dune::EquidistantOffsetCoordinates<double,2>>;
+#else
 using Grid = Dune::AlbertaGrid<GRIDDIM, WORLDDIM>;
+#endif
+
 using Param = LagrangeBasis<Grid, 2, 2, 2>;
 
 // using Grid = Dune::YaspGrid<2>;
@@ -480,10 +487,13 @@ class MyProblemInstat : public ProblemInstat<Traits> {
         u_df.interpolate(constant(0.0));
       }
 
+#ifdef YASPGRID
+#else
       for (int k = 0; k < 5; ++k) {
         this->problemStat_-> markElements(adaptInfo);
         this->problemStat_-> adaptGrid(adaptInfo);
       }
+#endif
 
       if (logParticles && mpiHelper.rank() == 0) {
         logFile << "Time: " << this->time_ << "\n";
@@ -582,6 +592,12 @@ void setInitValues(ProblemStat<Param>& prob, AdaptInfo& adaptInfo, DOFVectorType
 
   double threshold = 0.90;
 
+#ifdef YASPGRID
+  phi.interpolate(fct);
+  B0 = integrate(constant(1.0), prob.gridView(), 6);
+  density = integrate(valueOf(phi), prob.gridView(), 6)/B0; // density of the initial value
+  phi << 1.2*psibar/(density+0.0000001)*valueOf(phi);
+#else
   static GridFunctionMarker marker("interface", prob.grid(),
     invokeAtQP([interface_ref,bulk_ref,outer_ref,threshold](double const& phi) -> int {
     // std::cout << " marker f " << ((phi > -threshold) && (phi < threshold)) << " " << phi << std::endl;
@@ -600,6 +616,7 @@ void setInitValues(ProblemStat<Param>& prob, AdaptInfo& adaptInfo, DOFVectorType
     prob.adaptGrid(adaptInfo);
   }
   // prob.removeMarker("interface");
+#endif
 
   valueOf(u).interpolate(constant(0.0));
   psi.interpolate(constant(0.0));
@@ -700,7 +717,13 @@ int main(int argc, char** argv) {
   const FieldVector < double, 2 > lower = {-scale[0], -scale[1]};
   const FieldVector < double, 2 > upper = {scale[0], scale[1]};
 
-  std::shared_ptr < Grid > grid = Dune::StructuredGridFactory < Grid > ::createSimplexGrid(lower, upper, n);
+  #ifdef YASPGRID
+    Grid grid(lower, upper, {Nl*20, Nl*20});
+  #else
+    std::shared_ptr < Grid > grid = Dune::StructuredGridFactory < Grid > ::createSimplexGrid(lower, upper, n);
+  #endif
+
+
   // grid->loadBalance();
 
   // using GridView = Grid::LeafGridView;
