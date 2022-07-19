@@ -74,6 +74,7 @@ bool runAndTumble = false;
 bool logParticles = false;
 std::string logParticlesFname;
 double noiseSigma, compression;
+double cooldownTimestep, timestep_;
 
 FieldVector<double,2> scale;
 
@@ -481,8 +482,10 @@ class MyProblemInstat : public ProblemInstat<Traits> {
             particlesOld[particles[i].id] = particles[i];
         }
 
-        if (!vInit)
+        if (!vInit) {
           vInit = true;
+          adaptInfo.setTimestep(timestep_);
+        }
       } else {
         u_df.interpolate(constant(0.0));
       }
@@ -691,6 +694,9 @@ int main(int argc, char** argv) {
   N = Parameters::get<int>("vpfc->N").value_or(1);
   v0 = Parameters::get<double>("vpfc->v0").value_or(200);
   cooldown = Parameters::get<int>("vpfc->cooldown").value_or(5);
+  timestep_ = Parameters::get<double>("adapt->timestep").value();
+  // cooldownTimestep = Parameters::get<double>("adapt->cooldown timestep").value_or(timestep_);
+  cooldownTimestep = Parameters::get<double>("adapt->cooldown timestep").value_or(0.01);
   domain = Parameters::get<int>("vpfc->domain").value();
   compression = Parameters::get<double>("vpfc->c").value();
   bc = Parameters::get<double>("vpfc->bc").value();
@@ -741,6 +747,7 @@ int main(int argc, char** argv) {
   probInstat.initialize(INIT_UH_OLD);
 
   AdaptInfo adaptInfo("adapt");
+  adaptInfo.setTimestep(cooldownTimestep);
 
   setDensityOperators(prob, probInstat, u);
 
