@@ -21,7 +21,7 @@
 #include <typeinfo>
 #include <mpi.h>
 
-// #define YASPGRID 1
+#define YASPGRID 1
 
 std::pair<double, double> generateGaussianNoise(double mu, double sigma)
 {
@@ -72,6 +72,7 @@ bool addVacancy = true;
 bool addNoise = false;
 bool runAndTumble = false;
 bool logParticles = false;
+bool periodicBC_ = false;
 std::string logParticlesFname;
 double noiseSigma, compression;
 double cooldownTimestep, timestep_;
@@ -490,8 +491,7 @@ class MyProblemInstat : public ProblemInstat<Traits> {
         u_df.interpolate(constant(0.0));
       }
 
-#ifdef YASPGRID
-#else
+#ifndef YASPGRID
       for (int k = 0; k < 5; ++k) {
         this->problemStat_-> markElements(adaptInfo);
         this->problemStat_-> adaptGrid(adaptInfo);
@@ -665,7 +665,7 @@ void setDensityOperators(ProblemStat<Param>& prob, MyProblemInstat<Param>& probI
   std::cout << "setBounderyConditions " << scale[0] << " " << scale[1] << std::endl;
 
   // rectangular or circular domain
-  if (domain == 0)
+  if (domain == 0 && !periodicBC_)
   {
     auto op1BC = zot(-H*(tanh(100*(pow<20>(X(0)/scale[0])+pow<20>(X(1)/scale[1])-0.99))+1), 6);
     prob.addMatrixOperator(op1BC,1,0);
@@ -705,6 +705,7 @@ int main(int argc, char** argv) {
   runAndTumble = Parameters::get<bool>("vpfc->run and tumble").value_or(false);
   noiseSigma = Parameters::get<double>("vpfc->noise sigma").value();
   logParticles = Parameters::get<bool>("vpfc->log particles").value_or(false);
+  periodicBC_ = Parameters::get<bool>("vpfc->periodic").value_or(false);
   if (logParticles) logParticlesFname = Parameters::get<std::string>("vpfc->log particles fname").value();
   // Dune::YaspGrid<2> grid(Dune::FieldVector<double, 2>({2*scale[0], 2*scale[1]}), {2u, 2u});
   // using Factory2 = Dune::StructuredGridFactory<Grid>;
@@ -723,12 +724,12 @@ int main(int argc, char** argv) {
   const FieldVector < double, 2 > lower = {-scale[0], -scale[1]};
   const FieldVector < double, 2 > upper = {scale[0], scale[1]};
 
-  #ifdef YASPGRID
-    Grid grid(lower, upper, {Nl*20, Nl*20});
-  #else
-    std::shared_ptr < Grid > grid = Dune::StructuredGridFactory < Grid > ::createSimplexGrid(lower, upper, n);
-  #endif
-
+#ifdef YASPGRID
+  // Grid grid(lower, upper, {Nl*20, Nl*20}, std::bitset<2>("10"));
+  Grid grid(lower, upper, {Nl*20, Nl*20});
+#else
+  std::shared_ptr < Grid > grid = Dune::StructuredGridFactory < Grid > ::createSimplexGrid(lower, upper, n);
+#endif
 
   // grid->loadBalance();
 
@@ -750,6 +751,13 @@ int main(int argc, char** argv) {
   adaptInfo.setTimestep(cooldownTimestep);
 
   setDensityOperators(prob, probInstat, u);
+#ifdef YASPGRID
+  if (periodicBC_) {
+    prob.boundaryManager()->setBoxBoundary({-1,-1,1,1});
+    prob.addPeriodicBC(-1,{{1.0,0.0}, {0.0,1.0}}, {2*scale[0], 0.0});
+    prob.addPeriodicBC(1,{{1.0,0.0}, {0.0,1.0}}, {0.0, 2*scale[1]});
+  }
+#endif
 
   if (N == 2) {
     G2fix fct;
