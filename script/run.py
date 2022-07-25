@@ -19,16 +19,23 @@ config = configparser.ConfigParser(interpolation=configparser.ExtendedInterpolat
 config.optionxform=str
 config.read(args["i"])
 
+
+folder_path = "{}p_{}s_{}ts_{}m_{}v_{}_{}nl_ysp".format(config["parameters"]["N"], int(float(config["adapt"]["end time"])), config["adapt"]["timestep"].split('.')[1], 
+    config["parameters"]["mobility"], int(float(config["parameters"]["v0"])), int(float(config["parameters"]["domain"])),  config["domain"]["Nl"]+config["domain"]["lattice"])
+if int(config["parameters"]["run and tumble"]):
+    folder_path = "rt_" + folder_path;
+config["basic"]["folder"] = folder_path
+
+config["parameters"]["log particles fname"] = folder_path + config["parameters"]["log particles fname"]
+# Path(folder_path).mkdir(parents=True, exist_ok=True)
+Path(folder_path).mkdir(parents=True)
+
 templateLoader = jinja2.FileSystemLoader(searchpath="./")
 templateEnv = jinja2.Environment(loader=templateLoader)
 template = templateEnv.get_template("script/template.txt")
 
 init_txt = template.render(problem="vpfc", basic=config["basic"], parameters=config["parameters"], domain=config["domain"],
                             solver=config["solver"], output=config["output"]["names"].split(","), adapt=config["adapt"])
-
-# create the destination folder for the simulation
-folder_path = config["basic"]["folder"]
-Path(folder_path).mkdir(parents=True, exist_ok=True)
 
 # write the init file
 with open(os.path.join(folder_path,"init.2d"), "w") as f:

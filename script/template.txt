@@ -19,6 +19,7 @@ dimension of world:   2
 {{problem}}->output[{{loop.index-1}}]->name:               {{key}}
 {{problem}}->output[{{loop.index-1}}]->mode:               1
 {{problem}}->output[{{loop.index-1}}]->animation:          1
+{{problem}}->output[{{loop.index-1}}]->write after timestep: {{ adapt["write after timestep"] }}
 {% endfor %}
 
 {% for key in adapt -%}
