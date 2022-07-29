@@ -59,6 +59,7 @@ using Grid = Dune::AlbertaGrid<GRIDDIM, WORLDDIM>;
 #endif
 
 using Param = LagrangeBasis<Grid, 2, 2, 2>;
+// using Param = LagrangeBasis<Grid, 2, 2, 2, 2, 2, 2>;
 
 // using Grid = Dune::YaspGrid<2>;
 // using Param = LagrangeBasis<Grid, 1, 1, 1>;
@@ -104,8 +105,8 @@ struct CellPeakProp {
   : id(id), x(x), y(y), v_x(v_x), v_y(v_y), rv_x(rv_x), rv_y(rv_y), phi(phi), dd_phi(dd_phi) {}
 };
 
-double v0XInit[100];
-double v0YInit[100];
+double v0XInit[1000];
+double v0YInit[1000];
 
 std::vector<CellPeakProp> peaks;
 std::vector<CellPeakProp> particles;
@@ -133,7 +134,7 @@ public:
     // y[1][0] =  posX2 + 0.00001*(rand()%100-50);
     // y[1][1] =  posY2 + 0.00001*(rand()%100-50);
 
-    v0XInit[0] = 1.0; v0XInit[1] = -1.0;
+    v0XInit[0] = -1.0; v0XInit[1] = 1.0;
     v0YInit[0] = 0.0; v0YInit[1] = 0.0;
   }
 
@@ -246,8 +247,15 @@ private:
 };
 
 template <typename T, typename T1>
-double dist(const T& x, const T1& y) {
-  return std::sqrt(std::pow(x[0] - y[0], 2)+std::pow(x[1] - y[1], 2));
+double dist(const T& p1, const T1& p2) {
+  double dist_x = p1[0]-p2[0]; double dist_y = p1[1]-p2[1];
+
+  if (periodicBC_) {
+    dist_x = std::abs(dist_x) < scale[0] ? dist_x : scale[0]*2-std::abs(dist_x);
+    dist_y = std::abs(dist_y) < scale[1] ? dist_y : scale[1]*2-std::abs(dist_y);
+  }
+
+  return std::sqrt(std::pow(dist_x, 2)+std::pow(dist_y, 2));
 }
 
 using btype = AMDiS::GlobalBasis<Dune::Functions::PowerPreBasis<Dune::Functions::BasisFactory::FlatLexicographic, 
@@ -404,10 +412,11 @@ class MyProblemInstat : public ProblemInstat<Traits> {
 
         int checkID = 0;
 
-        if (vInit && runAndTumble) {
+        // +3 is when particlesOld[i].rv_x/y start to have correct values
+        if ((iter > cooldown+3) && runAndTumble) {
           for(auto i = 0; i < particlesOld.size(); ++i) {
             if ((std::abs(particlesOld[i].rv_x) + std::abs(particlesOld[i].rv_y))/(this->tau_*v0) < 0.05) {
-              // std::cout << "particle " << i << " " << particlesOld[i].x << " " << particlesOld[i].y << " tumbles at " << this->time_ << " " << std::abs(particlesOld[i].rv_x+particlesOld[i].rv_y) << " " << this->tau_*v0 << " " << particlesOld[i].v_x << " "
+              // std::cout << "particle " << i << " " << particlesOld[i].x << " " << particlesOld[i].y << " tumbles at " << this->time_ << " " << std::abs(particlesOld[i].rv_x)+std::abs(particlesOld[i].rv_y) << " " << this->tau_*v0 << " " << particlesOld[i].v_x << " "
               // << particlesOld[i].v_y << " " << this->time_-rntTime[i] << std::endl;
               double rn = distribution(generator);
 
@@ -449,19 +458,52 @@ class MyProblemInstat : public ProblemInstat<Traits> {
 
             double phi_x_norm = phi_x / particles[min_dist_i].phi;
 
-            particleWSPositions[min_dist_i][0] += x[0] * phi_x;
-            particleWSPositions[min_dist_i][1] += x[1] * phi_x;
+            if (periodicBC_)
+            {
+              // account for periodicity when determining weighted sum location of a particle
+              FieldVector<double,2> pos = FieldVector<double,2>(
+                {particleWSPositions[min_dist_i][0] / particleWSPositionsTotal[min_dist_i],
+                particleWSPositions[min_dist_i][1] / particleWSPositionsTotal[min_dist_i]});
+
+              if (std::abs(pos[0]-x[0]) > scale[0]) {
+                int sign_x = (pos[0] > 0) ? 1 : ((pos[0] < 0) ? -1 : 0);
+                particleWSPositions[min_dist_i][0] += sign_x*(2*scale[0]-std::abs(x[0])) * phi_x;
+              } else {
+                particleWSPositions[min_dist_i][0] += x[0] * phi_x;
+              }
+
+              if (std::abs(pos[1]-x[1]) > scale[1]) {
+                int sign_y = (pos[1] > 0) ? 1 : ((pos[1] < 0) ? -1 : 0);
+                particleWSPositions[min_dist_i][1] += sign_y*(2*scale[1]-std::abs(x[1])) * phi_x;
+              } else {
+                particleWSPositions[min_dist_i][1] += x[1] * phi_x;
+              }
+            }
+            else
+            {
+              particleWSPositions[min_dist_i][0] += x[0] * phi_x;
+              particleWSPositions[min_dist_i][1] += x[1] * phi_x;
+            }
+
             particleWSPositionsTotal[min_dist_i] += phi_x;
 
             // particle id is incorporated into the velocity field
             // to save additional iteration loop
-            if (vInit)
-              return FieldVector<double,3>{phi_x_norm*particles[min_dist_i].v_x, phi_x_norm*particles[min_dist_i].v_y, particles[min_dist_i].id};
+            if (vInit){
+              // normalize the velocity field
+              double v_norm = sqrt(pow(particles[min_dist_i].v_x,2)+pow(particles[min_dist_i].v_y, 2));
+              return FieldVector<double,3>{phi_x_norm*particles[min_dist_i].v_x/v_norm, phi_x_norm*particles[min_dist_i].v_y/v_norm, particles[min_dist_i].id};
+            }
             else
               return FieldVector<double,3>{phi_x_norm*v0XInit[min_dist_i], phi_x_norm*v0YInit[min_dist_i], min_dist_i};
           }
           return FieldVector<double,3>{0, 0, 0};
         }, phi, X());
+
+        // first iteration: velocity and id fields are no correct
+        if (!vInit) {
+          particles.clear();
+        }
 
         // compute particle locations as weighted sums of all non-zero phi elements
         for (int i = 0; i < particles.size(); ++i)
@@ -469,10 +511,34 @@ class MyProblemInstat : public ProblemInstat<Traits> {
           particles[i].x = particleWSPositions[i][0] / particleWSPositionsTotal[i];
           particles[i].y = particleWSPositions[i][1] / particleWSPositionsTotal[i];
 
+          if (periodicBC_) {
+            // account for periodicity when determining weighted sum location of a particle
+            if (std::abs(particles[i].x) > scale[0]) {
+              int sign_x = (particles[i].x > 0) ? 1 : ((particles[i].x < 0) ? -1 : 0);
+              particles[i].x = -1*sign_x*(2*scale[0]-std::abs(particles[i].x));
+            }
+            if (std::abs(particles[i].y) > scale[1]) {
+              int sign_y = (particles[i].y > 0) ? 1 : ((particles[i].y < 0) ? -1 : 0);
+              particles[i].y = -1*sign_y*(2*scale[1]-std::abs(particles[i].y));
+            }
+          }
+
           if (particlesOld.size())
           {
             particles[i].rv_x = particles[i].x - particlesOld[particles[i].id].x;
             particles[i].rv_y = particles[i].y - particlesOld[particles[i].id].y;
+
+            if (periodicBC_) {
+              // account for periodicity when determining real velocity of the particles
+              if (std::abs(particles[i].rv_x) > scale[0]) {
+                int sign_x = (particles[i].rv_x > 0) ? 1 : ((particles[i].rv_x < 0) ? -1 : 0);
+                particles[i].rv_x = -1*sign_x*(2*scale[0]-std::abs(particles[i].rv_x));
+              }
+              if (std::abs(particles[i].rv_y) > scale[1]) {
+                int sign_y = (particles[i].rv_y > 0) ? 1 : ((particles[i].rv_y < 0) ? -1 : 0);
+                particles[i].rv_y = -1*sign_y*(2*scale[1]-std::abs(particles[i].rv_y));
+              }
+            }
           }
         }
 
