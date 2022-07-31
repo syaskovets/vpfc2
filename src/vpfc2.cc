@@ -21,7 +21,8 @@
 #include <typeinfo>
 #include <mpi.h>
 
-#define YASPGRID 1
+// #define YASPGRID 1
+#define _DEBUG 1
 
 std::pair<double, double> generateGaussianNoise(double mu, double sigma)
 {
@@ -58,8 +59,11 @@ using Grid = Dune::YaspGrid<GRIDDIM, Dune::EquidistantOffsetCoordinates<double,2
 using Grid = Dune::AlbertaGrid<GRIDDIM, WORLDDIM>;
 #endif
 
+#ifdef _DEBUG
+using Param = LagrangeBasis<Grid, 2, 2, 2, 2, 2, 2, 2>;
+#else
 using Param = LagrangeBasis<Grid, 2, 2, 2>;
-// using Param = LagrangeBasis<Grid, 2, 2, 2, 2, 2, 2>;
+#endif
 
 // using Grid = Dune::YaspGrid<2>;
 // using Param = LagrangeBasis<Grid, 1, 1, 1>;
@@ -387,11 +391,17 @@ class MyProblemInstat : public ProblemInstat<Traits> {
 
         for(auto i = 0; i < peaks.size() || particles.size() < N; ++i) {
           bool insert = true;
-
-          for(auto it2 = particles.begin(); it2 != particles.end(); ++it2)
+#ifdef _DEBUG
+          std::cout << peaks[i].id << " being inserted " << std::endl;
+#endif
+          for(auto it2 = particles.begin(); it2 != particles.end(); ++it2) {
+#ifdef _DEBUG
+            std::cout << "distance to " << it2->id << " " << dist(FieldVector<double,2>{peaks[i].x, peaks[i].y}, FieldVector<double,2>{it2->x,it2->y}) << std::endl;
+#endif
             // 2.5 is an empirical min dist to filter out the same cells
             if (dist(FieldVector<double,2>{peaks[i].x, peaks[i].y}, FieldVector<double,2>{it2->x,it2->y}) < 2.5)
               insert = false;
+          }
 
           if (insert)
             particles.push_back(peaks[i]);
@@ -432,9 +442,9 @@ class MyProblemInstat : public ProblemInstat<Traits> {
           }
         }
 
-        if (particles.size() < N) {
-          std::cout << "Error!!! " << std::endl;
-        }
+        #ifdef _DEBUG
+          std::cout << particles.size() << " particles left out of " << N << std::endl;
+        #endif
 
         // arrays used to store weighted sum particle locations
         std::vector<FieldVector<double,2>> particleWSPositions;
@@ -718,6 +728,18 @@ void setDensityOperators(ProblemStat<Param>& prob, MyProblemInstat<Param>& probI
   // !sot?
   prob.addMatrixOperator(zot(-2*q*q), 1, 2);
   prob.addMatrixOperator(zot(1.0), 2, 2);
+
+#ifdef _DEBUG
+  // u
+  prob.addMatrixOperator(zot(1.0), 3, 3);
+  prob.addMatrixOperator(zot(1.0), 4, 4);
+  prob.addMatrixOperator(zot(1.0), 5, 5);
+  prob.addMatrixOperator(zot(1.0), 6, 6);
+  prob.addVectorOperator(zot(valueOf(u,0)), 3);
+  prob.addVectorOperator(zot(valueOf(u,1)), 4);
+  prob.addVectorOperator(zot(valueOf(u,2)), 5);
+  prob.addVectorOperator(zot(valueOf(u,0)*valueOf(u,0)+valueOf(u,1)*valueOf(u,1)), 6);
+#endif
 
 // lhs of the density
   auto op1Impl = zot(-3*pow<2>(phi) - std::pow(q, 4) - r - 6*H*(abs(phi)-phi), 6);
