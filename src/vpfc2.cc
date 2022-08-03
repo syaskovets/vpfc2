@@ -18,6 +18,8 @@
 #include <dune/grid/uggrid.hh>
 #include <dune/grid/utility/structuredgridfactory.hh>
 #include <dune/common/parallel/mpihelper.hh>
+#include <amdis/io/FileWriterCreator.hpp>
+
 #include <typeinfo>
 #include <mpi.h>
 
@@ -59,11 +61,7 @@ using Grid = Dune::YaspGrid<GRIDDIM, Dune::EquidistantOffsetCoordinates<double,2
 using Grid = Dune::AlbertaGrid<GRIDDIM, WORLDDIM>;
 #endif
 
-#ifdef _DEBUG
-using Param = LagrangeBasis<Grid, 2, 2, 2, 2, 2, 2, 2>;
-#else
 using Param = LagrangeBasis<Grid, 2, 2, 2>;
-#endif
 
 // using Grid = Dune::YaspGrid<2>;
 // using Param = LagrangeBasis<Grid, 1, 1, 1>;
@@ -114,7 +112,7 @@ double v0YInit[1000];
 
 std::vector<CellPeakProp> peaks;
 std::vector<CellPeakProp> particles;
-std::vector<CellPeakProp> particlesOld;
+std::map<unsigned int,CellPeakProp> particlesOld;
 
 /// inital value function
 class G2fix
@@ -274,7 +272,6 @@ const AMDiS::AdaptiveGrid<Dune::ALUGrid<2, 2, Dune::simplex, Dune::conforming> >
 // Dune::Functions::LagrangePreBasis<Dune::GridView<AMDiS::DefaultLeafGridViewTraits<
 // const AMDiS::AdaptiveGrid<Dune::ALUGrid<2, 2, Dune::simplex, Dune::conforming> > > >, 1, double>, 8> >;
 
-
 template <class B, class GF, class TP>
 void iterateTreeSubset(B const& basis, GF const& gf, TP const& treePath)
 {
@@ -290,10 +287,11 @@ void iterateTreeSubset(B const& basis, GF const& gf, TP const& treePath)
     Traversal::forEachLeafNode(subTree, [&](auto const& node, auto const& tp)
     {
       using Traits = typename TYPEOF(node)::FiniteElement::Traits::LocalBasisType::Traits;
-      using RangeField = typename Traits::RangeFieldType;
-      thread_local std::vector<RangeField> interpolationCoeff;
+      using Range = typename Traits::RangeType;
+      // using RangeField = typename Traits::RangeFieldType;
+      thread_local std::vector<Range> interpolationCoeff;
 
-      node.finiteElement().localInterpolation().interpolate(AMDiS::HierarchicNodeWrapper{tp,lf}, interpolationCoeff);
+      node.finiteElement().localInterpolation().interpolate(lf, interpolationCoeff);
     });
   }
 }
@@ -311,7 +309,7 @@ void applyComposerGridFunction(DiscreteFunction<Coeff, GB, TreePath, R>& df, Exp
 
 template <class... Args>
 static auto create(const Args&... args) {
-  return AMDiS::GlobalBasis{args..., power<3>(lagrange<1>())};
+  return AMDiS::GlobalBasis{args..., power<3>(lagrange<2>())};
 }
 
 template <class Traits>
@@ -329,18 +327,35 @@ class MyProblemInstat : public ProblemInstat<Traits> {
   // to save additional iteration loop
   typedef decltype(create(std::declval<typename ProblemStat<Traits>::GridView>())) u_type;
   DOFVector<u_type>& u;
+  std::list<std::shared_ptr<FileWriterInterface>> filewriter__;
+  unsigned int newPartId;
 
   public:
     MyProblemInstat(std::string const& name, ProblemStat<Traits>& prob, DOFVector<u_type>& u, const Dune::MPIHelper& mpiHelper)
-      : iter(0), vInit(false), ProblemInstat<Traits>(name, prob), u(u), mpiHelper(mpiHelper), distribution(0.0,1.0) {
-        if (logParticles) logFile.open(logParticlesFname);
+      : iter(0), vInit(false), ProblemInstat<Traits>(name, prob), u(u), mpiHelper(mpiHelper), distribution(0.0,1.0), newPartId(N+100) {
+      if (logParticles) logFile.open(logParticlesFname);
 
-        for (size_t i = 0; i < N; ++i)
-          rntTime[i] = 0.0;
+      for (size_t i = 0; i < N; ++i)
+        rntTime[i] = 0.0;
+
+#ifdef _DEBUG
+      FileWriterCreator<DOFVector<u_type>> creator(std::shared_ptr<DOFVector<u_type>>(&u, [](DOFVector<u_type> *) {}), this->problemStat_->boundaryManager());
+      filewriter__.clear();
+
+      auto localView = u.basis().localView();
+      Traversal::forEachNode(localView.tree(), [&](auto const& /*node*/, auto treePath) -> void
+      {
+        std::string componentName = "u->output[" + to_string(treePath) + "]";
+        std::string format = "vtk";
+        auto writer = creator.create(format, componentName, treePath);
+        if (writer)
+          filewriter__.push_back(std::move(writer));
+      });
+#endif
     }
 
     ~MyProblemInstat() {
-        if (logParticles) logFile.close();
+      if (logParticles) logFile.close();
     }
 
     void closeTimestep(AdaptInfo& adaptInfo) {
@@ -368,8 +383,8 @@ class MyProblemInstat : public ProblemInstat<Traits> {
 
 
         auto f1 = invokeAtQP([&](auto phi_x, auto dd_p_x, auto v, auto const& x) {
-          // consider only ampls within 20% of the max (min_mu)
-          if ((min_mu-dd_p_x[0])/min_mu < 0.2) {
+          // consider only ampls within 25% of the max (min_mu)
+          if ((min_mu-dd_p_x[0])/min_mu < 0.25) {
             peaks.push_back(CellPeakProp{v[2], x[0], x[1], v[0], v[1], 0.0, 0.0, phi_x[0], dd_p_x[0]});
             return 1;
           }
@@ -389,22 +404,50 @@ class MyProblemInstat : public ProblemInstat<Traits> {
 
         particles.clear();
 
-        for(auto i = 0; i < peaks.size() || particles.size() < N; ++i) {
+        for(int i = 0; i < peaks.size() && particles.size() < N; ++i) {
           bool insert = true;
 #ifdef _DEBUG
-          std::cout << peaks[i].id << " being inserted " << std::endl;
+          std::cout << min_mu << " min_mu " <<  peaks[i].id << " being inserted " << peaks[i].x << " " << peaks[i].y << " " << peaks[i].phi << " " << peaks[i].dd_phi <<  std::endl;
 #endif
           for(auto it2 = particles.begin(); it2 != particles.end(); ++it2) {
 #ifdef _DEBUG
-            std::cout << "distance to " << it2->id << " " << dist(FieldVector<double,2>{peaks[i].x, peaks[i].y}, FieldVector<double,2>{it2->x,it2->y}) << std::endl;
+            // bool flag = peaks[i].id == it2->id;
+            // std::cout << "distance to " << it2->id << " " << dist(FieldVector<double,2>{peaks[i].x, peaks[i].y}, FieldVector<double,2>{it2->x,it2->y}) << " " << flag << std::endl;
+#endif
+            // 2.5 is an empirical min dist to filter out the same cells
+            if (dist(FieldVector<double,2>{peaks[i].x, peaks[i].y}, FieldVector<double,2>{it2->x,it2->y}) < 2.5 || (vInit && peaks[i].id == it2->id))
+              insert = false;
+          }
+
+          if (insert)
+            particles.push_back(peaks[i]);
+        }
+
+        // if new particles emerge
+        for(int i = 0; i < peaks.size() && particles.size() < N; ++i) {
+          bool insert = true;
+#ifdef _DEBUG
+          std::cout << min_mu << " new_part " <<  peaks[i].id << " " << newPartId << " being inserted " << peaks[i].x << " " << peaks[i].y << " " << peaks[i].phi << " " << peaks[i].dd_phi <<  std::endl;
+#endif
+          for(auto it2 = particles.begin(); it2 != particles.end(); ++it2) {
+#ifdef _DEBUG
+            // std::cout << "distance to " << it2->id << " " << dist(FieldVector<double,2>{peaks[i].x, peaks[i].y}, FieldVector<double,2>{it2->x,it2->y}) << std::endl;
 #endif
             // 2.5 is an empirical min dist to filter out the same cells
             if (dist(FieldVector<double,2>{peaks[i].x, peaks[i].y}, FieldVector<double,2>{it2->x,it2->y}) < 2.5)
               insert = false;
           }
 
-          if (insert)
+          if (insert) {
+            peaks[i].id = ++newPartId;
+            double rn = distribution(generator);
+            double x = cos(2*rn*M_PI); peaks[i].v_x = x;
+            double y = sin(2*rn*M_PI); peaks[i].v_y = y;
+            peaks[i].rv_x = 0;
+            peaks[i].rv_y = 0;
+
             particles.push_back(peaks[i]);
+          }
         }
 
         if (vInit && addNoise) {
@@ -442,9 +485,9 @@ class MyProblemInstat : public ProblemInstat<Traits> {
           }
         }
 
-        #ifdef _DEBUG
+#ifdef _DEBUG
           std::cout << particles.size() << " particles left out of " << N << std::endl;
-        #endif
+#endif
 
         // arrays used to store weighted sum particle locations
         std::vector<FieldVector<double,2>> particleWSPositions;
@@ -554,7 +597,7 @@ class MyProblemInstat : public ProblemInstat<Traits> {
 
         if (vInit)
         {
-          particlesOld.clear(); particlesOld.resize(N);
+          particlesOld.clear();
           for (int i = 0; i < particles.size(); ++i)
             particlesOld[particles[i].id] = particles[i];
         }
@@ -583,6 +626,11 @@ class MyProblemInstat : public ProblemInstat<Traits> {
         }
         logFile.flush();
       }
+
+#ifdef _DEBUG
+      for (auto writer : filewriter__)
+        writer->write(adaptInfo, true);
+#endif
 
       ProblemInstat<Traits>::closeTimestep(adaptInfo);
     }
@@ -729,18 +777,6 @@ void setDensityOperators(ProblemStat<Param>& prob, MyProblemInstat<Param>& probI
   prob.addMatrixOperator(zot(-2*q*q), 1, 2);
   prob.addMatrixOperator(zot(1.0), 2, 2);
 
-#ifdef _DEBUG
-  // u
-  prob.addMatrixOperator(zot(1.0), 3, 3);
-  prob.addMatrixOperator(zot(1.0), 4, 4);
-  prob.addMatrixOperator(zot(1.0), 5, 5);
-  prob.addMatrixOperator(zot(1.0), 6, 6);
-  prob.addVectorOperator(zot(valueOf(u,0)), 3);
-  prob.addVectorOperator(zot(valueOf(u,1)), 4);
-  prob.addVectorOperator(zot(valueOf(u,2)), 5);
-  prob.addVectorOperator(zot(valueOf(u,0)*valueOf(u,0)+valueOf(u,1)*valueOf(u,1)), 6);
-#endif
-
 // lhs of the density
   auto op1Impl = zot(-3*pow<2>(phi) - std::pow(q, 4) - r - 6*H*(abs(phi)-phi), 6);
   prob.addMatrixOperator(op1Impl, 1, 0);
@@ -830,7 +866,7 @@ int main(int argc, char** argv) {
   ProblemStat<Param> prob("vpfc", grid);
   prob.initialize(INIT_ALL);
 
-  DOFVector u(prob.gridView(), power<3>(lagrange<1>()));
+  DOFVector u(prob.gridView(), power<3>(lagrange<2>()));
 
   MyProblemInstat<Param> probInstat("vpfc", prob, u, mpiHelper);
   probInstat.initialize(INIT_UH_OLD);
