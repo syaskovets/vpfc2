@@ -73,6 +73,7 @@ double q, r, H, M, v0;
 int N, cooldown, domain, bc;
 bool addVacancy = true;
 bool addNoise = false;
+bool vicsek = false; double vicsekR = 0;
 bool runAndTumble = false;
 bool logParticles = false;
 bool periodicBC_ = false;
@@ -450,21 +451,6 @@ class MyProblemInstat : public ProblemInstat<Traits> {
           }
         }
 
-        if (vInit && addNoise) {
-          for(auto i = 0; i < particles.size(); ++i) {
-            double x = particles[i].v_x;
-            double y = particles[i].v_y;
-            double alpha = atan2 (y,x) * 180.0 / M_PI;
-
-            alpha += generateGaussianNoise(0,noiseSigma).first;
-
-            x = cos(alpha * M_PI / 180.0); particles[i].v_x = x;
-            y = sin(alpha * M_PI / 180.0); particles[i].v_y = y;
-          }
-        }
-
-        int checkID = 0;
-
         // +3 is when particlesOld[i].rv_x/y start to have correct values
         if ((iter > cooldown+3) && runAndTumble) {
           for(auto i = 0; i < particlesOld.size(); ++i) {
@@ -482,6 +468,43 @@ class MyProblemInstat : public ProblemInstat<Traits> {
 
               rntTime[i] = this->time_;
             }
+          }
+        }
+
+        if (vInit && vicsek) {
+          std::vector<CellPeakProp> theta;
+          for(auto i = 0; i < particles.size(); ++i) {
+            theta.clear();
+
+            for (int j = 0; j < particles.size(); ++j)
+            {
+              if (dist(FieldVector<double,2>{particles[i].x, particles[i].y}, FieldVector<double,2>{particles[j].x, particles[j].y}) < vicsekR) {
+                theta.push_back(particles[j]);
+              }
+            }
+
+            double u1 = 0, u2 = 0;
+            for (int j = 0; j < theta.size(); ++j)
+            {
+              u1 += theta[j].v_x;
+              u2 += theta[j].v_y;
+            }
+
+            particles[i].v_x = u1/particles.size();
+            particles[i].v_y = u2/particles.size();
+          }
+        }
+
+        if (vInit && addNoise) {
+          for(auto i = 0; i < particles.size(); ++i) {
+            double x = particles[i].v_x;
+            double y = particles[i].v_y;
+            double alpha = atan2 (y,x) * 180.0 / M_PI;
+
+            alpha += generateGaussianNoise(0,noiseSigma).first;
+
+            x = cos(alpha * M_PI / 180.0); particles[i].v_x = x;
+            y = sin(alpha * M_PI / 180.0); particles[i].v_y = y;
           }
         }
 
@@ -617,8 +640,11 @@ class MyProblemInstat : public ProblemInstat<Traits> {
       }
 #endif
 
+      double B0 = integrate(constant(1.0), this->problemStat_->gridView(), 6);
+      double density = integrate(valueOf(phi), this->problemStat_->gridView(), 6)/B0; // density of the phi
+
       if (logParticles && mpiHelper.rank() == 0) {
-        logFile << "Time: " << this->time_ << "\n";
+        logFile << "Time: " << this->time_ << " density " << density << "\n";
         for (size_t i = 0; i < particles.size(); ++i)
         {
           logFile << "\t" << particles[i].id << " " << particles[i].x << " " << particles[i].y \
@@ -827,6 +853,8 @@ int main(int argc, char** argv) {
   addVacancy = Parameters::get<bool>("vpfc->add vacancy").value_or(true);
   addNoise = Parameters::get<bool>("vpfc->add noise").value_or(true);
   runAndTumble = Parameters::get<bool>("vpfc->run and tumble").value_or(false);
+  vicsek = Parameters::get<bool>("vpfc->vicsek").value_or(false);
+  vicsekR = Parameters::get<bool>("vpfc->vicsekR").value_or(10.0);
   noiseSigma = Parameters::get<double>("vpfc->noise sigma").value();
   logParticles = Parameters::get<bool>("vpfc->log particles").value_or(false);
   periodicBC_ = Parameters::get<bool>("vpfc->periodic").value_or(false);
@@ -875,6 +903,7 @@ int main(int argc, char** argv) {
   adaptInfo.setTimestep(cooldownTimestep);
 
   setDensityOperators(prob, probInstat, u);
+
 #ifdef YASPGRID
   if (periodicBC_) {
     prob.boundaryManager()->setBoxBoundary({-1,-1,1,1});
