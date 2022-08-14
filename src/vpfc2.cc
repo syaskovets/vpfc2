@@ -257,6 +257,8 @@ int main(int argc, char** argv) {
   addVacancy = Parameters::get<bool>("vpfc->add vacancy").value_or(true);
   addNoise = Parameters::get<bool>("vpfc->add noise").value_or(true);
   runAndTumble = Parameters::get<bool>("vpfc->run and tumble").value_or(false);
+  // rate is measured in tumbles/s
+  RTRate = Parameters::get<double>("vpfc->run and tumble rate").value_or(1);
   vicsek = Parameters::get<bool>("vpfc->vicsek").value_or(false);
   vicsekR = Parameters::get<bool>("vpfc->vicsekR").value_or(10.0);
   noiseSigma = Parameters::get<double>("vpfc->noise sigma").value();
@@ -282,7 +284,7 @@ int main(int argc, char** argv) {
 
 #ifdef YASPGRID
   // Grid grid(lower, upper, {Nl*20, Nl*20}, std::bitset<2>("10"));
-  Grid grid(lower, upper, {Nl*20, Nl*20});
+  Grid grid(lower, upper, {Nl*25, Nl*25});
 #else
   std::shared_ptr < Grid > grid = Dune::StructuredGridFactory < Grid > ::createSimplexGrid(lower, upper, n);
 #endif

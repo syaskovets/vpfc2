@@ -25,8 +25,8 @@
 #include <typeinfo>
 #include <mpi.h>
 
-// #define YASPGRID 1
-#define _DEBUG 1
+#define YASPGRID 1
+// #define _DEBUG 1
 
 using namespace AMDiS;
 using namespace Dune::Functions::BasisFactory;
@@ -53,7 +53,7 @@ int N, cooldown, domain, bc;
 bool addVacancy = true;
 bool addNoise = false;
 bool vicsek = false; double vicsekR = 0;
-bool runAndTumble = false;
+bool runAndTumble = false; double RTRate = 0;
 bool logParticles = false;
 bool periodicBC_ = false;
 std::string logParticlesFname;

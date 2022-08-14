@@ -62,23 +62,25 @@ class MyProblemInstat : public ProblemInstat<Traits> {
   const Dune::MPIHelper& mpiHelper;
   // time of last run and tumble for every particle
   std::map<unsigned, double> rntTime;
-  std::default_random_engine generator;
+  std::random_device rd;
+  std::default_random_engine randGen;
+  std::mt19937 randGen2;
+  std::poisson_distribution<> poissonDistr;
   std::uniform_real_distribution<double> distribution;
 
   // particle id is incorporated into the velocity field
   // to save additional iteration loop
   typedef decltype(create(std::declval<typename ProblemStat<Traits>::GridView>())) u_type;
+
+
   DOFVector<u_type>& u;
   std::list<std::shared_ptr<FileWriterInterface>> filewriter__;
   unsigned int newPartId;
 
   public:
     MyProblemInstat(std::string const& name, ProblemStat<Traits>& prob, DOFVector<u_type>& u, const Dune::MPIHelper& mpiHelper)
-      : iter(0), vInit(false), ProblemInstat<Traits>(name, prob), u(u), mpiHelper(mpiHelper), distribution(0.0,1.0), newPartId(N+100) {
+      : iter(0), vInit(false), ProblemInstat<Traits>(name, prob), u(u), mpiHelper(mpiHelper), distribution(0.0,1.0), newPartId(N+100), randGen2(rd()), poissonDistr(RTRate/timestep_) {
       if (logParticles) logFile.open(logParticlesFname);
-
-      for (size_t i = 0; i < N; ++i)
-        rntTime[i] = 0.0;
 
 #ifdef _DEBUG
       FileWriterCreator<DOFVector<u_type>> creator(std::shared_ptr<DOFVector<u_type>>(&u, [](DOFVector<u_type> *) {}), this->problemStat_->boundaryManager());
@@ -94,6 +96,16 @@ class MyProblemInstat : public ProblemInstat<Traits> {
           filewriter__.push_back(std::move(writer));
       });
 #endif
+
+      if (runAndTumble) {
+        // determine after how many time steps to tumble
+        // average \nu is \lamdba/dt
+        // \lamdba is in tumbles/s
+        for (size_t i = 0; i < N; ++i)
+        {
+          rntTime[i] = poissonDistr(randGen2);
+        }
+      }
     }
 
     ~MyProblemInstat() {
@@ -182,7 +194,7 @@ class MyProblemInstat : public ProblemInstat<Traits> {
 
           if (insert) {
             peaks[i].id = ++newPartId;
-            double rn = distribution(generator);
+            double rn = distribution(randGen);
             double x = cos(2*rn*M_PI); peaks[i].v_x = x;
             double y = sin(2*rn*M_PI); peaks[i].v_y = y;
             peaks[i].rv_x = 0;
@@ -195,10 +207,11 @@ class MyProblemInstat : public ProblemInstat<Traits> {
         // +3 is when particlesOld[i].rv_x/y start to have correct values
         if ((iter > cooldown+3) && runAndTumble) {
           for(auto i = 0; i < particlesOld.size(); ++i) {
-            if ((std::abs(particlesOld[i].rv_x) + std::abs(particlesOld[i].rv_y))/(this->tau_*v0) < 0.05) {
+            // if ((std::abs(particlesOld[i].rv_x) + std::abs(particlesOld[i].rv_y))/(this->tau_*v0) < 0.05) {
+            if (--rntTime[i] < 1) {
               // std::cout << "particle " << i << " " << particlesOld[i].x << " " << particlesOld[i].y << " tumbles at " << this->time_ << " " << std::abs(particlesOld[i].rv_x)+std::abs(particlesOld[i].rv_y) << " " << this->tau_*v0 << " " << particlesOld[i].v_x << " "
               // << particlesOld[i].v_y << " " << this->time_-rntTime[i] << std::endl;
-              double rn = distribution(generator);
+              double rn = distribution(randGen);
 
               for (size_t j = 0; j < particles.size(); ++j)
                 if (particles[j].id == i) {
@@ -207,7 +220,8 @@ class MyProblemInstat : public ProblemInstat<Traits> {
                   break;
                 }
 
-              rntTime[i] = this->time_;
+
+              rntTime[i] = poissonDistr(randGen2);
             }
           }
         }
